@@ -25,6 +25,21 @@ pip install "open-rating-engine[all]"   # plus every optional extra
 Optional dependencies are imported lazily, so `import open_rating_engine` works on a core-only
 install.
 
+## Imports
+
+The headline names (the pipeline, every layer class, the layer exceptions and `apply_aging`) are
+available from the top-level package. Everything else lives in its subpackage:
+
+```python
+from open_rating_engine import PyfuncPricingPipeline, RatingTablesLayer, apply_aging
+from open_rating_engine.optimization import PriceOptimizerRatingFactor
+from open_rating_engine.rating_engine.binning import thermometer_column_names
+```
+
+Package `__init__` modules load their names on first use, so `import open_rating_engine` is
+near-instant. You pay for mlflow only when you touch the pipeline or a layer. Each module's
+`__all__` defines its public API.
+
 ## Rating engine
 
 `PyfuncPricingPipeline` (`open_rating_engine.rating_engine.pricing_pipeline`):

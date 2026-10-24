@@ -13,6 +13,11 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+__all__ = [
+    "apply_aging",
+    "AgingRuleError",
+]
+
 
 SOURCE_COLUMN_LAYER_TYPE = "SourceColumn"
 
