@@ -1,0 +1,82 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "open-rating-engine"
+version = "0.1.0"
+description = "A DAG-based insurance/banking rating engine with price optimisation"
+readme = "README.md"
+authors = [
+    { name = "bhavek jamnadas", email = "bhavek.jamnadas.actuary@gmail.com" }
+]
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+keywords = ["actuarial", "actuary", "pricing", "rating engine", "price optimisation", "insurance"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "numpy>=1.20",
+    "pandas<3",  # RatingTablesLayer key validation assumes object-dtype strings
+    "mlflow",
+    "tqdm",
+    "scipy",
+    "numba",
+]
+
+[project.optional-dependencies]
+h2o = [
+    "h2o",
+    "jpype1",
+]
+onnx = [
+    "onnxruntime",
+]
+viz = [
+    "plotly",
+    "networkx",
+]
+notebook = [
+    "ipywidgets",
+]
+azure = [
+    "azure-storage-blob",
+]
+all = [
+    "open-rating-engine[h2o,onnx,viz,notebook,azure]",
+]
+test = [
+    "pytest>=8.0",
+    "pytest-cov",
+    "pytest-mock",
+    "jpype1",
+]
+
+[project.urls]
+Homepage = "https://github.com/bhavek-jamnadas/open-rating-engine"
+Issues = "https://github.com/bhavek-jamnadas/open-rating-engine/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+addopts = "-ra -q"
+filterwarnings = [
+    "ignore::UserWarning",
+    "ignore::DeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["open_rating_engine"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
