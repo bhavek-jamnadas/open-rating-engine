@@ -405,7 +405,7 @@ class _RatingFactorDecisionSpace:
         """
         if not hasattr(self, "_layer_meta"):
             raise RuntimeError("to_layer requires an optimizer built via from_pipeline().")
-        from open_rating_engine import RatingTablesLayer
+        from ..rating_engine.pricing_layers import RatingTablesLayer
 
         meta = self._layer_meta
         return RatingTablesLayer(

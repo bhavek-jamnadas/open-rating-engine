@@ -4,6 +4,10 @@ import numpy as np
 import pandas as pd
 from tqdm.notebook import tqdm
 
+__all__ = [
+    "PriceOptimizerIndividual",
+]
+
 
 _RESERVED_SUMMARY_COLS = ("target_constraint", "constraint", "objective", "price_multiplier")
 

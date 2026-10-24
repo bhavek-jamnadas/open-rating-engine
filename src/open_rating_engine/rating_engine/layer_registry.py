@@ -14,6 +14,10 @@ from .pricing_layers import (
     SourceColumn,
 )
 
+__all__ = [
+    "LAYER_REGISTRY",
+]
+
 LAYER_REGISTRY = {
     "ColumnCalculation": ColumnCalculation,
     "SourceColumn": SourceColumn,

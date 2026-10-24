@@ -9,6 +9,10 @@ from tqdm.notebook import tqdm
 
 from ._decision_space import _RatingFactorDecisionSpace, _RESERVED_SUMMARY_COLS
 
+__all__ = [
+    "PriceOptimizerRatingFactor",
+]
+
 
 @njit
 def _fast_linear_interpolator(price_points, values, target_prices):

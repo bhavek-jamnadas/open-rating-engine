@@ -31,6 +31,13 @@ from typing import List
 import numpy as np
 import pandas as pd
 
+__all__ = [
+    "THERMOMETER_SUFFIX",
+    "n_bins_from_edges",
+    "thermometer_column_names",
+    "apply_thermometer_encoding",
+]
+
 # Suffix for the k-th cumulative indicator. Double underscore keeps it clear of
 # real column names (same convention as the fit pipeline's synthetic columns).
 THERMOMETER_SUFFIX = "__ge_"
