@@ -7,7 +7,7 @@ from .._lazy import attach
 __getattr__, __dir__, __all__ = attach(
     __name__,
     exports={
-        ".pricing_pipeline": ["PyfuncPricingPipeline", "download_blob_to_temp"],
+        ".pricing_pipeline": ["PyfuncPricingPipeline"],
         ".pricing_layers": [
             "BasePricingLayer",
             "ColumnCalculation",
@@ -48,4 +48,4 @@ if TYPE_CHECKING:
         TableJoin,
         TableTransform,
     )
-    from .pricing_pipeline import PyfuncPricingPipeline, download_blob_to_temp
+    from .pricing_pipeline import PyfuncPricingPipeline

@@ -1,5 +1,4 @@
 # Standard library imports
-import os
 import sys
 import time
 import warnings
@@ -11,7 +10,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-import re
 
 # Local application/library-specific imports
 from typing import List, Dict, Callable, Optional, Union
@@ -39,52 +37,9 @@ from .pricing_layers import (
     TableTransform,
 )
 
-import tempfile
-from urllib.parse import urlparse
-
 __all__ = [
     "PyfuncPricingPipeline",
-    "download_blob_to_temp",
 ]
-
-def download_blob_to_temp(blob_url: str, conn_str: str = None) -> str:
-    """Download a blob from Azure Blob Storage to a local temp directory.
-
-    Accepts a full blob URL:
-      https://<account>.blob.core.windows.net/<container>/<blob_path>
-
-    Returns the absolute path to the downloaded file.
-
-    Requires the optional ``azure`` extra: ``pip install open-rating-engine[azure]``.
-    """
-    try:
-        from azure.storage.blob import BlobServiceClient
-    except ImportError as exc:  # pragma: no cover - exercised via monkeypatch
-        raise ImportError(
-            "Azure Blob support requires the optional 'azure' extra. "
-            "Install it with: pip install open-rating-engine[azure]"
-        ) from exc
-
-    parsed = urlparse(blob_url)
-    path_parts = parsed.path.lstrip("/").split("/", 1)
-    if len(path_parts) != 2:
-        raise ValueError(f"Cannot parse blob URL: {blob_url!r}")
-    container_name, blob_name = path_parts
-    filename = os.path.basename(blob_name)
-    tmp_dir = tempfile.mkdtemp()
-    local_path = os.path.join(tmp_dir, filename)
-
-    if conn_str is None:
-        conn_str = os.environ["AZURE_STORAGE_CONNECTION_STRING"]
-
-    blob_client = BlobServiceClient.from_connection_string(conn_str).get_blob_client(
-        container=container_name, blob=blob_name
-    )
-
-    with open(local_path, "wb") as f:
-        blob_client.download_blob().readinto(f)
-
-    return local_path
 
 # ---------------------------------------------------------------------------
 # Pipeline
@@ -112,9 +67,6 @@ class PyfuncPricingPipeline(PythonModel):
         self.options: Dict = {"show_progress": True}
         self.pydantic_model = pydantic_model
         self._execution_order: Optional[List[str]] = None
-
-        if "azure_blob" in kwargs:
-            self.options["azure_blob"] = kwargs["azure_blob"]
 
         if not isinstance(context, PythonModelContext):
             raise TypeError("context must be an instance of PythonModelContext")
@@ -153,7 +105,12 @@ class PyfuncPricingPipeline(PythonModel):
         return self
 
     def load_context(self, context: PythonModelContext) -> None:
+        """Bind ``context`` to the pipeline and initialise layers that need artifacts.
 
+        Every value in ``context.artifacts`` must be a local file path. The engine does
+        not fetch remote storage: a caller holding artifacts elsewhere (blob storage, S3,
+        a model registry) downloads them and passes the local paths in the context.
+        """
         import jpype
         import jpype.imports
         import sys
@@ -162,13 +119,6 @@ class PyfuncPricingPipeline(PythonModel):
             if isinstance(path, str):
                 context.artifacts[name] = path.replace("\\", "/")
             print(f'Load Context: Adding Artifact - {name}', file=sys.stderr)
-            if bool(re.match(r"^https://[^/]+\.blob\.core\.windows\.net/", path)):
-                print(f"Load Context: Downloading artifact {name} from Azure Blob Storage...", file=sys.stderr)
-                local_path = download_blob_to_temp(path)
-                print(f"Load Context: Downloaded {name} to {local_path}", file=sys.stderr)
-                context.artifacts[name] = local_path.replace("\\", "/")
-
-        
 
         self.context = context
 

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -10,12 +10,12 @@ readme = "README.md"
 authors = [
     { name = "bhavek jamnadas", email = "bhavek.jamnadas.actuary@gmail.com" }
 ]
-license = { file = "LICENSE" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.9"
 keywords = ["actuarial", "actuary", "pricing", "rating engine", "price optimisation", "insurance"]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
 ]
 dependencies = [
@@ -42,11 +42,8 @@ viz = [
 notebook = [
     "ipywidgets",
 ]
-azure = [
-    "azure-storage-blob",
-]
 all = [
-    "open-rating-engine[h2o,onnx,viz,notebook,azure]",
+    "open-rating-engine[h2o,onnx,viz,notebook]",
 ]
 test = [
     "pytest>=8.0",
