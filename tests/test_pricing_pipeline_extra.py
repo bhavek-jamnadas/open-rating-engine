@@ -46,6 +46,23 @@ def test_load_context_normalises_paths_and_inits_h2o(monkeypatch):
     assert layer.wrapper is not None  # init_from_context ran
 
 
+def test_load_context_does_not_fetch_remote_artifacts(monkeypatch):
+    """Artifacts are taken as given: a URL is the caller's to resolve, not the engine's."""
+    import jpype
+
+    monkeypatch.setattr(jpype, "isJVMStarted", lambda: False, raising=False)
+
+    url = "https://acct.blob.core.windows.net/c/m.zip"
+    ctx = PythonModelContext(
+        artifacts={"model": url, "not_a_path": 42},
+        model_config={"environment": "local"},
+    )
+    pipe = PyfuncPricingPipeline(ctx)
+    pipe.load_context(ctx)
+
+    assert ctx.artifacts == {"model": url, "not_a_path": 42}
+
+
 def test_non_local_environment_roundtrips_arrays(sample_data):
     ctx = PythonModelContext(
         artifacts={}, model_config={"environment": "cloud"}

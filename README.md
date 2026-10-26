@@ -20,7 +20,6 @@ pip install "open-rating-engine[all]"   # plus every optional extra
 | `onnx` | `onnxruntime` | `OnnxScoring` |
 | `viz` | `plotly`, `networkx` | `PyfuncPricingPipeline.plot_dag()` |
 | `notebook` | `ipywidgets` | optimiser progress bars in Jupyter |
-| `azure` | `azure-storage-blob` | `download_blob_to_temp` |
 
 Optional dependencies are imported lazily, so `import open_rating_engine` works on a core-only
 install.
@@ -49,6 +48,9 @@ near-instant. You pay for mlflow only when you touch the pipeline or a layer. Ea
   in parallel waves. Structural layers (joins, drops, renames, aggregations) run in sequence so
   that tables stay consistent.
 - `predict(context, model_input)` is the MLflow-compatible scoring entry point.
+- `load_context(context)` expects every artifact in `context.artifacts` to be a local file
+  path. The engine fetches nothing remote, so download artifacts from blob storage or a model
+  registry before building the context.
 - `profile_predict()` returns how long each layer took. `plot_dag()` draws the graph.
 
 Pipeline state is a dict of named DataFrames. Each layer declares what it reads (`depends_on`)

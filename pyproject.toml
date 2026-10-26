@@ -42,11 +42,8 @@ viz = [
 notebook = [
     "ipywidgets",
 ]
-azure = [
-    "azure-storage-blob",
-]
 all = [
-    "open-rating-engine[h2o,onnx,viz,notebook,azure]",
+    "open-rating-engine[h2o,onnx,viz,notebook]",
 ]
 test = [
     "pytest>=8.0",
