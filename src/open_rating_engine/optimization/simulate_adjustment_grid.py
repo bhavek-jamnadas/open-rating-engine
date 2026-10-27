@@ -156,7 +156,9 @@ def make_demand_emulation(layer_name, table_key, mode="scale"):
     -------
     callable
         ``(data, pipeline, factor) -> dict[str, pd.DataFrame]`` suitable as the
-        ``premium_emulation`` argument to :func:`simulate_adjustment_grid`.
+        ``premium_emulation`` argument to :func:`simulate_adjustment_grid`. It
+        returns ``data`` unchanged: the adjustment lives in the mutated
+        pipeline, which :func:`simulate_adjustment_grid` then scores once.
 
     Notes
     -----
@@ -183,6 +185,6 @@ def make_demand_emulation(layer_name, table_key, mode="scale"):
         else:  # scale
             tbl["value"] = tbl["value"].to_numpy() * factor
             layer.default_values[table_key] = layer.default_values[table_key] * factor
-        return pipeline.predict(data)
+        return data
 
     return premium_emulation

@@ -4,6 +4,8 @@ We patch ``_load_model`` (JPype + hex genmodel) and ``_mojo_predict_pandas``
 (per-row wrapper scoring) so no JVM is ever started.
 """
 
+from copy import deepcopy
+
 import pandas as pd
 import pytest
 
@@ -131,6 +133,15 @@ def test_getstate_drops_unpicklable_wrapper(patch_h2o, mock_context):
     layer.init_from_context(mock_context)
     assert layer.wrapper is not None
     assert layer.__getstate__()["wrapper"] is None
+
+
+def test_deepcopy_shares_loaded_wrapper(patch_h2o, mock_context):
+    layer = _layer("regression")
+    layer.init_from_context(mock_context)
+    clone = deepcopy(layer)
+    assert clone.wrapper is layer.wrapper
+    assert clone.column_map == layer.column_map
+    assert clone.column_map is not layer.column_map
 
 
 def test_h2o_layer_inside_pipeline(patch_h2o, pipeline, sample_data, mock_context):

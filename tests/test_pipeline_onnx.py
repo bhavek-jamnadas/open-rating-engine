@@ -5,6 +5,8 @@ We patch ``_load_model`` so no real ``onnxruntime.InferenceSession`` is built;
 is enough to assert the select/rename/feed/output plumbing.
 """
 
+from copy import deepcopy
+
 import numpy as np
 import pytest
 
@@ -95,6 +97,15 @@ def test_getstate_drops_unpicklable_session(patch_onnx, mock_context):
     layer.init_from_context(mock_context)
     assert layer.session is not None
     assert layer.__getstate__()["session"] is None
+
+
+def test_deepcopy_shares_loaded_session(patch_onnx, mock_context):
+    layer = _layer()
+    layer.init_from_context(mock_context)
+    clone = deepcopy(layer)
+    assert clone.session is layer.session
+    assert clone.column_map == layer.column_map
+    assert clone.column_map is not layer.column_map
 
 
 def test_from_dict_roundtrip():
