@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from numba import njit
 from scipy.optimize import minimize
-from tqdm.notebook import tqdm
+from tqdm.auto import tqdm  # the notebook widget in Jupyter, a console bar anywhere else
 
 from ._decision_space import _RatingFactorDecisionSpace, _RESERVED_SUMMARY_COLS
 

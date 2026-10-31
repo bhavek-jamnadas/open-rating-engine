@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import pandas as pd
-from tqdm.notebook import tqdm
+from tqdm.auto import tqdm  # the notebook widget in Jupyter, a console bar anywhere else
 
 __all__ = ["simulate_adjustment_grid", "make_demand_emulation"]
 
