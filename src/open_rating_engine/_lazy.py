@@ -41,6 +41,17 @@ def attach(package, exports, submodules=()):
     submodules = frozenset(submodules)
     __all__ = sorted(set(name_to_module) | submodules)
 
+    # A name that is also the name of the submodule defining it cannot be lazy. Importing
+    # that submodule -- from anywhere: a sibling name's lookup below, or a caller's direct
+    # `import package.name` -- makes the import system bind the MODULE on the package
+    # under that name, and __getattr__ only runs for a MISSING attribute, so it never runs
+    # again. `from package import name` then returns the module, depending on import order.
+    # Binding the defining object now, during the package's own import, is the only order
+    # that cannot lose: a later import of the already-loaded submodule does not rebind it.
+    for name, module in name_to_module.items():
+        if module == f".{name}":
+            setattr(sys.modules[package], name, getattr(import_module(module, package), name))
+
     def __getattr__(name):
         if name in name_to_module:
             value = getattr(import_module(name_to_module[name], package), name)

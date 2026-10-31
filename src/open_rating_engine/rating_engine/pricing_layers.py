@@ -1,6 +1,7 @@
 # Standard library imports
 import warnings
 from abc import ABC, abstractmethod
+from copy import deepcopy
 from collections import deque, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -1617,6 +1618,21 @@ class CustomLayer(BasePricingLayer):
 # ---------------------------------------------------------------------------
 # Score models
 # ---------------------------------------------------------------------------
+def _deepcopy_sharing(obj, memo, shared_attr: str):
+    """Deep-copy ``obj`` but keep ``shared_attr`` (a loaded model) by reference.
+
+    ``__getstate__`` drops the model so the layer pickles, and ``deepcopy`` would
+    otherwise go through it too, making every copy reload the model from disk. The
+    optimisers deep-copy the pipeline once per grid point / objective evaluation, so
+    they share the read-only loaded model instead.
+    """
+    clone = obj.__class__.__new__(obj.__class__)
+    memo[id(obj)] = clone
+    for key, value in obj.__dict__.items():
+        setattr(clone, key, value if key == shared_attr else deepcopy(value, memo))
+    return clone
+
+
 def _row_to_h2o_payload(row: pd.Series) -> dict[str, str]:
     """Stringify a row for H2O RowData, omitting missing values.
 
@@ -1748,6 +1764,9 @@ class H2OScoringParameter(ColumnCalculation):
         state = self.__dict__.copy()
         state["wrapper"] = None
         return state
+
+    def __deepcopy__(self, memo):
+        return _deepcopy_sharing(self, memo, "wrapper")
 
     @staticmethod
     def _mojo_predict_pandas(
@@ -2077,6 +2096,9 @@ class OnnxScoring(ColumnCalculation):
         state = self.__dict__.copy()
         state["session"] = None
         return state
+
+    def __deepcopy__(self, memo):
+        return _deepcopy_sharing(self, memo, "session")
 
     def _score(
         self, scoring_df: pd.DataFrame, context: PythonModelContext = None

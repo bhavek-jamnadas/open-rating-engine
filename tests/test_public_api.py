@@ -66,6 +66,36 @@ def test_reexports_are_the_defining_objects(package):
             assert getattr(importlib.import_module(value.__module__), name) is value
 
 
+@pytest.mark.parametrize(
+    "code",
+    [
+        # The sibling is resolved first, and its __getattr__ loads the shared submodule.
+        "from open_rating_engine.optimization import make_demand_emulation, simulate_adjustment_grid",
+        # A direct submodule import before the package re-export is read.
+        "import open_rating_engine.optimization.simulate_adjustment_grid\n"
+        "from open_rating_engine.optimization import simulate_adjustment_grid",
+    ],
+)
+def test_a_name_shared_with_its_submodule_is_the_function_in_any_import_order(code):
+    """`simulate_adjustment_grid` is both a function and the module defining it.
+
+    Importing the module binds it on the package under that name, after which the lazy
+    __getattr__ never runs -- so the asterisk-core worker received the MODULE and failed
+    with "'module' object is not callable". The checks above cannot see it: a module is
+    not None, and `test_reexports_are_the_defining_objects` skips anything not callable.
+    Run in a subprocess because the outcome depends on what this process imported first.
+    """
+    out = subprocess.run(
+        [sys.executable, "-c", f"{code}\nprint(type(simulate_adjustment_grid).__name__)"],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=pathlib.Path(__file__).resolve().parents[1],
+        env={**os.environ, "PYTHONPATH": "src"},
+    )
+    assert out.stdout.strip() == "function"
+
+
 @pytest.mark.parametrize("module", MODULES)
 def test_module_declares_all(module):
     mod = importlib.import_module(module)
