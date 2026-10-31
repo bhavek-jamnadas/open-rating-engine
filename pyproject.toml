@@ -12,7 +12,7 @@ authors = [
 ]
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 keywords = ["actuarial", "actuary", "pricing", "rating engine", "price optimisation", "insurance"]
 classifiers = [
     "Programming Language :: Python :: 3",
