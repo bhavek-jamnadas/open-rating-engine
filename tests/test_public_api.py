@@ -20,6 +20,7 @@ PACKAGES = [
     "open_rating_engine.rating_engine",
     "open_rating_engine.optimization",
     "open_rating_engine.data_processing",
+    "open_rating_engine.scoring_plan",
 ]
 
 MODULES = [
@@ -33,6 +34,9 @@ MODULES = [
     "open_rating_engine.optimization.multi_period_individual_price_optimizer",
     "open_rating_engine.optimization.multi_period_rating_factor_price_optimizer",
     "open_rating_engine.optimization.simulate_adjustment_grid",
+    "open_rating_engine.scoring_plan.expressions",
+    "open_rating_engine.scoring_plan.exporter",
+    "open_rating_engine.scoring_plan.parity",
 ]
 
 

@@ -1,0 +1,1525 @@
+{
+ "format": "open-rating-plan",
+ "version": 1,
+ "source_accessors": [
+  [
+   "risk",
+   "value"
+  ],
+  [
+   "risk",
+   "age"
+  ]
+ ],
+ "models": {
+  "tiny_model": {
+   "path": "models/tiny_model.onnx",
+   "sha256": "49567f875a27915a26b8ca0bbcea480d80c6aaabf8e5c986fd2826e7b0134ab5"
+  }
+ },
+ "steps": [
+  {
+   "op": "column",
+   "layer": "age_band",
+   "table": "risk",
+   "column": "age_band",
+   "expr": {
+    "k": "cut",
+    "x": {
+     "k": "col",
+     "name": "age"
+    },
+    "edges": [
+     15.0,
+     25.0,
+     35.0,
+     45.0,
+     55.0,
+     65.0,
+     "inf"
+    ],
+    "labels": [
+     "15-24",
+     "25-34",
+     "35-44",
+     "45-54",
+     "55-64",
+     "65+"
+    ],
+    "right": true,
+    "include_lowest": false
+   }
+  },
+  {
+   "op": "column",
+   "layer": "age_code",
+   "table": "risk",
+   "column": "age_code",
+   "expr": {
+    "k": "cut",
+    "x": {
+     "k": "col",
+     "name": "age"
+    },
+    "edges": [
+     0.0,
+     30.0,
+     60.0
+    ],
+    "labels": null,
+    "right": true,
+    "include_lowest": false
+   }
+  },
+  {
+   "op": "column",
+   "layer": "is_private",
+   "table": "risk",
+   "column": "is_private",
+   "expr": {
+    "k": "call",
+    "f": "where",
+    "args": [
+     {
+      "k": "cmp",
+      "op": "eq",
+      "l": {
+       "k": "col",
+       "name": "usage"
+      },
+      "r": {
+       "k": "const",
+       "t": "str",
+       "v": "Private"
+      }
+     },
+     {
+      "k": "const",
+      "t": "int",
+      "v": 1
+     },
+     {
+      "k": "const",
+      "t": "int",
+      "v": 0
+     }
+    ]
+   }
+  },
+  {
+   "op": "column",
+   "layer": "usage_missing",
+   "table": "risk",
+   "column": "usage_missing",
+   "expr": {
+    "k": "call",
+    "f": "isna",
+    "args": [
+     {
+      "k": "col",
+      "name": "usage"
+     }
+    ]
+   }
+  },
+  {
+   "op": "column",
+   "layer": "usage_filled",
+   "table": "risk",
+   "column": "usage_filled",
+   "expr": {
+    "k": "call",
+    "f": "fillna",
+    "args": [
+     {
+      "k": "col",
+      "name": "usage"
+     },
+     {
+      "k": "const",
+      "t": "str",
+      "v": "Unknown"
+     }
+    ]
+   }
+  },
+  {
+   "op": "column",
+   "layer": "rounded_ages",
+   "table": "risk",
+   "column": "rounded_ages",
+   "expr": {
+    "k": "arith",
+    "op": "add",
+    "l": {
+     "k": "call",
+     "f": "floor",
+     "args": [
+      {
+       "k": "arith",
+       "op": "div",
+       "l": {
+        "k": "col",
+        "name": "age"
+       },
+       "r": {
+        "k": "const",
+        "t": "int",
+        "v": 7
+       }
+      }
+     ]
+    },
+    "r": {
+     "k": "call",
+     "f": "ceil",
+     "args": [
+      {
+       "k": "arith",
+       "op": "div",
+       "l": {
+        "k": "col",
+        "name": "age"
+       },
+       "r": {
+        "k": "const",
+        "t": "int",
+        "v": 7
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "tenure",
+   "table": "risk",
+   "column": "tenure",
+   "expr": {
+    "k": "agg",
+    "source": "policy",
+    "func": "first",
+    "column": "tenure",
+    "target_key": "policy_number",
+    "source_key": "policy_number",
+    "fill": {
+     "k": "const",
+     "t": "float",
+     "v": "nan"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "region",
+   "table": "risk",
+   "column": "region",
+   "expr": {
+    "k": "agg",
+    "source": "policy",
+    "func": "first",
+    "column": "region",
+    "target_key": "policy_number",
+    "source_key": "policy_number",
+    "fill": {
+     "k": "const",
+     "t": "float",
+     "v": "nan"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "prev_or_zero",
+   "table": "policy",
+   "column": "prev_or_zero",
+   "expr": {
+    "k": "call",
+    "f": "fillna",
+    "args": [
+     {
+      "k": "col",
+      "name": "previous_gwp"
+     },
+     {
+      "k": "const",
+      "t": "int",
+      "v": 0
+     }
+    ]
+   }
+  },
+  {
+   "op": "column",
+   "layer": "cover_total",
+   "table": "risk",
+   "column": "cover_total",
+   "expr": {
+    "k": "agg",
+    "source": "cover",
+    "func": "sum",
+    "column": "limit",
+    "target_key": "risk_number",
+    "source_key": "risk_number",
+    "fill": {
+     "k": "const",
+     "t": "int",
+     "v": -1
+    }
+   }
+  },
+  {
+   "op": "join",
+   "layer": "join_region",
+   "left": "policy",
+   "right": {
+    "catalog": {
+     "columns": [
+      {
+       "name": "region",
+       "dtype": "str",
+       "values": [
+        "north",
+        "south"
+       ]
+      },
+      {
+       "name": "region_factor",
+       "dtype": "f64",
+       "values": [
+        1.1,
+        0.9
+       ]
+      },
+      {
+       "name": "tenure",
+       "dtype": "i64",
+       "values": [
+        100,
+        200
+       ]
+      }
+     ]
+    }
+   },
+   "left_on": [
+    "region"
+   ],
+   "right_on": [
+    "region"
+   ],
+   "output": "policy",
+   "columns": null,
+   "suffixes": [
+    "",
+    "_right"
+   ]
+  },
+  {
+   "op": "aggregate_table",
+   "layer": "cover_agg",
+   "source": "cover",
+   "output": "cover_agg",
+   "keys": [
+    "risk_number"
+   ],
+   "aggs": [
+    [
+     "limit_total",
+     "limit",
+     "sum"
+    ],
+    [
+     "n_covers",
+     "cover_type",
+     "count"
+    ],
+    [
+     "first_cover",
+     "cover_type",
+     "first"
+    ]
+   ]
+  },
+  {
+   "op": "column",
+   "layer": "value_override",
+   "table": "risk",
+   "column": "value",
+   "expr": {
+    "k": "arith",
+    "op": "mul",
+    "l": {
+     "k": "col",
+     "name": "value{}"
+    },
+    "r": {
+     "k": "const",
+     "t": "float",
+     "v": 1.1
+    }
+   }
+  },
+  {
+   "op": "rating_tables",
+   "layer": "band_factor",
+   "table": "risk",
+   "column": "band_factor",
+   "tables": [
+    {
+     "name": "age_factor",
+     "keys": [
+      "age_band"
+     ],
+     "key_rows": [
+      [
+       "15-24"
+      ],
+      [
+       "25-34"
+      ],
+      [
+       "35-44"
+      ],
+      [
+       "65+"
+      ]
+     ],
+     "value_dtype": "f64",
+     "values": [
+      1.3,
+      1.0,
+      0.95,
+      1.2
+     ],
+     "default": 1.15
+    },
+    {
+     "name": "usage_factor",
+     "keys": [
+      "usage"
+     ],
+     "key_rows": [
+      [
+       "Private"
+      ],
+      [
+       "Rideshare"
+      ]
+     ],
+     "value_dtype": "f64",
+     "values": [
+      1.0,
+      1.4
+     ],
+     "default": 1.0
+    },
+    {
+     "name": "usage_add",
+     "keys": [
+      "usage"
+     ],
+     "key_rows": [
+      [
+       "Rideshare"
+      ]
+     ],
+     "value_dtype": "f64",
+     "values": [
+      0.05
+     ],
+     "default": 0.0
+    }
+   ],
+   "formula": {
+    "k": "arith",
+    "op": "add",
+    "l": {
+     "k": "arith",
+     "op": "mul",
+     "l": {
+      "k": "rt",
+      "table": "age_factor"
+     },
+     "r": {
+      "k": "rt",
+      "table": "usage_factor"
+     }
+    },
+    "r": {
+     "k": "rt",
+     "table": "usage_add"
+    }
+   }
+  },
+  {
+   "op": "rating_tables",
+   "layer": "band_product",
+   "table": "risk",
+   "column": "band_product",
+   "tables": [
+    {
+     "name": "age_factor",
+     "keys": [
+      "age_band"
+     ],
+     "key_rows": [
+      [
+       "15-24"
+      ],
+      [
+       "25-34"
+      ]
+     ],
+     "value_dtype": "i64",
+     "values": [
+      2,
+      3
+     ],
+     "default": 1.0
+    },
+    {
+     "name": "usage_factor",
+     "keys": [
+      "usage"
+     ],
+     "key_rows": [
+      [
+       "Private"
+      ]
+     ],
+     "value_dtype": "f64",
+     "values": [
+      1.5
+     ],
+     "default": 1.0
+    }
+   ],
+   "formula": null
+  },
+  {
+   "op": "glm",
+   "layer": "glm_legacy",
+   "table": "risk",
+   "column": "glm_legacy",
+   "inputs": null,
+   "derived": [],
+   "eta": {
+    "k": "arith",
+    "op": "add",
+    "l": {
+     "k": "arith",
+     "op": "add",
+     "l": {
+      "k": "const",
+      "t": "float",
+      "v": 0.3,
+      "strong": true
+     },
+     "r": {
+      "k": "call",
+      "f": "fillna",
+      "args": [
+       {
+        "k": "call",
+        "f": "to_numeric",
+        "args": [
+         {
+          "k": "arith",
+          "op": "mul",
+          "l": {
+           "k": "call",
+           "f": "to_numeric",
+           "args": [
+            {
+             "k": "col",
+             "name": "age"
+            }
+           ]
+          },
+          "r": {
+           "k": "const",
+           "t": "float",
+           "v": 0.01
+          }
+         }
+        ]
+       },
+       {
+        "k": "const",
+        "t": "float",
+        "v": 0.0
+       }
+      ]
+     }
+    },
+    "r": {
+     "k": "call",
+     "f": "fillna",
+     "args": [
+      {
+       "k": "call",
+       "f": "to_numeric",
+       "args": [
+        {
+         "k": "str_lookup",
+         "x": {
+          "k": "col",
+          "name": "risk_number"
+         },
+         "mapping": {
+          "1": 0.2,
+          "4": -0.3
+         }
+        }
+       ]
+      },
+      {
+       "k": "const",
+       "t": "float",
+       "v": 0.0
+      }
+     ]
+    }
+   },
+   "offset": "age_code",
+   "link": "logit"
+  },
+  {
+   "op": "column",
+   "layer": "older_private",
+   "table": "risk",
+   "column": "older_private",
+   "expr": {
+    "k": "call",
+    "f": "astype_int",
+    "args": [
+     {
+      "k": "logic",
+      "op": "or",
+      "l": {
+       "k": "logic",
+       "op": "and",
+       "l": {
+        "k": "cmp",
+        "op": "gt",
+        "l": {
+         "k": "col",
+         "name": "age"
+        },
+        "r": {
+         "k": "const",
+         "t": "int",
+         "v": 30
+        }
+       },
+       "r": {
+        "k": "cmp",
+        "op": "eq",
+        "l": {
+         "k": "col",
+         "name": "usage"
+        },
+        "r": {
+         "k": "const",
+         "t": "str",
+         "v": "Private"
+        }
+       }
+      },
+      "r": {
+       "k": "not",
+       "x": {
+        "k": "cmp",
+        "op": "eq",
+        "l": {
+         "k": "col",
+         "name": "is_private"
+        },
+        "r": {
+         "k": "const",
+         "t": "int",
+         "v": 1
+        }
+       }
+      }
+     }
+    ]
+   }
+  },
+  {
+   "op": "join",
+   "layer": "join_region_keys",
+   "left": "risk",
+   "right": {
+    "catalog": {
+     "columns": [
+      {
+       "name": "region",
+       "dtype": "str",
+       "values": [
+        "north",
+        "south"
+       ]
+      },
+      {
+       "name": "region_factor",
+       "dtype": "f64",
+       "values": [
+        1.1,
+        0.9
+       ]
+      },
+      {
+       "name": "tenure",
+       "dtype": "i64",
+       "values": [
+        100,
+        200
+       ]
+      }
+     ]
+    }
+   },
+   "left_on": [
+    "region"
+   ],
+   "right_on": [
+    "region"
+   ],
+   "output": "risk",
+   "columns": [
+    "region_factor"
+   ],
+   "suffixes": [
+    "",
+    "_right"
+   ]
+  },
+  {
+   "op": "column",
+   "layer": "value_raw",
+   "table": "risk",
+   "column": "value_raw",
+   "expr": {
+    "k": "col",
+    "name": "value{}"
+   }
+  },
+  {
+   "op": "column",
+   "layer": "ratio",
+   "table": "risk",
+   "column": "ratio",
+   "expr": {
+    "k": "arith",
+    "op": "div",
+    "l": {
+     "k": "col",
+     "name": "value"
+    },
+    "r": {
+     "k": "col",
+     "name": "age"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "log_value",
+   "table": "risk",
+   "column": "log_value",
+   "expr": {
+    "k": "arith",
+    "op": "add",
+    "l": {
+     "k": "call",
+     "f": "log",
+     "args": [
+      {
+       "k": "col",
+       "name": "value"
+      }
+     ]
+    },
+    "r": {
+     "k": "call",
+     "f": "sqrt",
+     "args": [
+      {
+       "k": "col",
+       "name": "age"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "based_value",
+   "table": "risk",
+   "column": "based_value",
+   "expr": {
+    "k": "arith",
+    "op": "add",
+    "l": {
+     "k": "arith",
+     "op": "mul",
+     "l": {
+      "k": "const",
+      "t": "float",
+      "v": 1.07
+     },
+     "r": {
+      "k": "col",
+      "name": "value"
+     }
+    },
+    "r": {
+     "k": "const",
+     "t": "int",
+     "v": 25
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "risk_count",
+   "table": "policy",
+   "column": "risk_count",
+   "expr": {
+    "k": "agg",
+    "source": "risk",
+    "func": "count",
+    "column": null,
+    "target_key": "policy_number",
+    "source_key": "policy_number",
+    "fill": {
+     "k": "const",
+     "t": "int",
+     "v": 0
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "total_value",
+   "table": "policy",
+   "column": "total_value",
+   "expr": {
+    "k": "agg",
+    "source": "risk",
+    "func": "sum",
+    "column": "value",
+    "target_key": "policy_number",
+    "source_key": "policy_number",
+    "fill": {
+     "k": "const",
+     "t": "float",
+     "v": "nan"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "mean_value",
+   "table": "policy",
+   "column": "mean_value",
+   "expr": {
+    "k": "agg",
+    "source": "risk",
+    "func": "mean",
+    "column": "value",
+    "target_key": "policy_number",
+    "source_key": "policy_number",
+    "fill": {
+     "k": "const",
+     "t": "float",
+     "v": "nan"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "max_age",
+   "table": "policy",
+   "column": "max_age",
+   "expr": {
+    "k": "agg",
+    "source": "risk",
+    "func": "max",
+    "column": "age",
+    "target_key": "policy_number",
+    "source_key": "policy_number",
+    "fill": {
+     "k": "const",
+     "t": "float",
+     "v": "nan"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "min_usage",
+   "table": "policy",
+   "column": "min_usage",
+   "expr": {
+    "k": "agg",
+    "source": "risk",
+    "func": "min",
+    "column": "usage",
+    "target_key": "policy_number",
+    "source_key": "policy_number",
+    "fill": {
+     "k": "const",
+     "t": "float",
+     "v": "nan"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "first_usage",
+   "table": "policy",
+   "column": "first_usage",
+   "expr": {
+    "k": "agg",
+    "source": "risk",
+    "func": "first",
+    "column": "usage",
+    "target_key": "policy_number",
+    "source_key": "policy_number",
+    "fill": {
+     "k": "const",
+     "t": "float",
+     "v": "nan"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "last_usage",
+   "table": "policy",
+   "column": "last_usage",
+   "expr": {
+    "k": "agg",
+    "source": "risk",
+    "func": "last",
+    "column": "usage",
+    "target_key": "policy_number",
+    "source_key": "policy_number",
+    "fill": {
+     "k": "const",
+     "t": "float",
+     "v": "nan"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "usage_kinds",
+   "table": "policy",
+   "column": "usage_kinds",
+   "expr": {
+    "k": "agg",
+    "source": "risk",
+    "func": "nunique",
+    "column": "usage",
+    "target_key": "policy_number",
+    "source_key": "policy_number",
+    "fill": {
+     "k": "const",
+     "t": "float",
+     "v": "nan"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "value_std",
+   "table": "policy",
+   "column": "value_std",
+   "expr": {
+    "k": "agg",
+    "source": "risk",
+    "func": "std",
+    "column": "value",
+    "target_key": "policy_number",
+    "source_key": "policy_number",
+    "fill": {
+     "k": "const",
+     "t": "float",
+     "v": "nan"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "value_median",
+   "table": "policy",
+   "column": "value_median",
+   "expr": {
+    "k": "agg",
+    "source": "risk",
+    "func": "median",
+    "column": "value",
+    "target_key": "policy_number",
+    "source_key": "policy_number",
+    "fill": {
+     "k": "const",
+     "t": "float",
+     "v": "nan"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "age_sum",
+   "table": "policy",
+   "column": "age_sum",
+   "expr": {
+    "k": "agg",
+    "source": "risk",
+    "func": "sum",
+    "column": "age",
+    "target_key": "policy_number",
+    "source_key": "policy_number",
+    "fill": {
+     "k": "const",
+     "t": "float",
+     "v": "nan"
+    }
+   }
+  },
+  {
+   "op": "onnx",
+   "layer": "model_score",
+   "table": "risk",
+   "column": "model_score",
+   "model": "tiny_model",
+   "inputs": [
+    [
+     "age",
+     "age"
+    ],
+    [
+     "value",
+     "value"
+    ],
+    [
+     "usage",
+     "usage"
+    ],
+    [
+     "risk_id",
+     "risk_number"
+    ]
+   ]
+  },
+  {
+   "op": "glm",
+   "layer": "glm_frequency",
+   "table": "risk",
+   "column": "glm_frequency",
+   "inputs": [
+    [
+     "value",
+     "value"
+    ],
+    [
+     "age",
+     "age"
+    ],
+    [
+     "usage",
+     "usage"
+    ]
+   ],
+   "derived": [
+    {
+     "name": "age2",
+     "expr": {
+      "k": "arith",
+      "op": "mul",
+      "l": {
+       "k": "col",
+       "name": "age"
+      },
+      "r": {
+       "k": "const",
+       "t": "int",
+       "v": 2
+      }
+     }
+    }
+   ],
+   "eta": {
+    "k": "arith",
+    "op": "add",
+    "l": {
+     "k": "arith",
+     "op": "add",
+     "l": {
+      "k": "arith",
+      "op": "add",
+      "l": {
+       "k": "arith",
+       "op": "add",
+       "l": {
+        "k": "const",
+        "t": "float",
+        "v": -2.1,
+        "strong": true
+       },
+       "r": {
+        "k": "call",
+        "f": "fillna",
+        "args": [
+         {
+          "k": "call",
+          "f": "to_numeric",
+          "args": [
+           {
+            "k": "arith",
+            "op": "mul",
+            "l": {
+             "k": "call",
+             "f": "log",
+             "args": [
+              {
+               "k": "call",
+               "f": "to_numeric",
+               "args": [
+                {
+                 "k": "col",
+                 "name": "value"
+                }
+               ]
+              }
+             ]
+            },
+            "r": {
+             "k": "const",
+             "t": "float",
+             "v": 0.12
+            }
+           }
+          ]
+         },
+         {
+          "k": "const",
+          "t": "float",
+          "v": 0.0
+         }
+        ]
+       }
+      },
+      "r": {
+       "k": "call",
+       "f": "fillna",
+       "args": [
+        {
+         "k": "call",
+         "f": "to_numeric",
+         "args": [
+          {
+           "k": "arith",
+           "op": "mul",
+           "l": {
+            "k": "call",
+            "f": "to_numeric",
+            "args": [
+             {
+              "k": "col",
+              "name": "age2"
+             }
+            ]
+           },
+           "r": {
+            "k": "const",
+            "t": "float",
+            "v": -0.004
+           }
+          }
+         ]
+        },
+        {
+         "k": "const",
+         "t": "float",
+         "v": 0.0
+        }
+       ]
+      }
+     },
+     "r": {
+      "k": "call",
+      "f": "fillna",
+      "args": [
+       {
+        "k": "call",
+        "f": "to_numeric",
+        "args": [
+         {
+          "k": "str_lookup",
+          "x": {
+           "k": "col",
+           "name": "usage"
+          },
+          "mapping": {
+           "Private": 0.0,
+           "Rideshare": 0.31
+          }
+         }
+        ]
+       },
+       {
+        "k": "const",
+        "t": "float",
+        "v": 0.0
+       }
+      ]
+     }
+    },
+    "r": {
+     "k": "call",
+     "f": "fillna",
+     "args": [
+      {
+       "k": "call",
+       "f": "to_numeric",
+       "args": [
+        {
+         "k": "bin_lookup",
+         "x": {
+          "k": "call",
+          "f": "to_numeric",
+          "args": [
+           {
+            "k": "col",
+            "name": "age"
+           }
+          ]
+         },
+         "edges": [
+          15.0,
+          25.0,
+          40.0,
+          100.0
+         ],
+         "right": true,
+         "include_lowest": true,
+         "values": [
+          0.4,
+          0.1,
+          "nan"
+         ],
+         "missing": 0.7
+        }
+       ]
+      },
+      {
+       "k": "const",
+       "t": "float",
+       "v": 0.0
+      }
+     ]
+    }
+   },
+   "offset": null,
+   "link": "log"
+  },
+  {
+   "op": "join",
+   "layer": "join_cover",
+   "left": "risk",
+   "right": {
+    "table": "cover_agg"
+   },
+   "left_on": [
+    "risk_number"
+   ],
+   "right_on": [
+    "risk_number"
+   ],
+   "output": "risk",
+   "columns": null,
+   "suffixes": [
+    "",
+    "_right"
+   ]
+  },
+  {
+   "op": "column",
+   "layer": "ratio_clipped",
+   "table": "risk",
+   "column": "ratio_clipped",
+   "expr": {
+    "k": "call",
+    "f": "clip",
+    "args": [
+     {
+      "k": "col",
+      "name": "ratio"
+     }
+    ],
+    "lower": {
+     "k": "const",
+     "t": "int",
+     "v": 100
+    },
+    "upper": {
+     "k": "const",
+     "t": "int",
+     "v": 1000
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "ratio_rounded",
+   "table": "risk",
+   "column": "ratio_rounded",
+   "expr": {
+    "k": "call",
+    "f": "round",
+    "args": [
+     {
+      "k": "col",
+      "name": "ratio"
+     }
+    ],
+    "decimals": 2
+   }
+  },
+  {
+   "op": "column",
+   "layer": "poly",
+   "table": "risk",
+   "column": "poly",
+   "expr": {
+    "k": "arith",
+    "op": "add",
+    "l": {
+     "k": "arith",
+     "op": "sub",
+     "l": {
+      "k": "arith",
+      "op": "pow",
+      "l": {
+       "k": "col",
+       "name": "age"
+      },
+      "r": {
+       "k": "const",
+       "t": "int",
+       "v": 2
+      }
+     },
+     "r": {
+      "k": "arith",
+      "op": "div",
+      "l": {
+       "k": "call",
+       "f": "abs",
+       "args": [
+        {
+         "k": "arith",
+         "op": "sub",
+         "l": {
+          "k": "col",
+          "name": "value"
+         },
+         "r": {
+          "k": "const",
+          "t": "int",
+          "v": 20000
+         }
+        }
+       ]
+      },
+      "r": {
+       "k": "const",
+       "t": "int",
+       "v": 1000
+      }
+     }
+    },
+    "r": {
+     "k": "neg",
+     "x": {
+      "k": "call",
+      "f": "astype_float",
+      "args": [
+       {
+        "k": "col",
+        "name": "ratio"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "capped",
+   "table": "policy",
+   "column": "capped",
+   "expr": {
+    "k": "call",
+    "f": "where",
+    "args": [
+     {
+      "k": "call",
+      "f": "isna",
+      "args": [
+       {
+        "k": "col",
+        "name": "previous_gwp"
+       }
+      ]
+     },
+     {
+      "k": "col",
+      "name": "total_value"
+     },
+     {
+      "k": "call",
+      "f": "minimum",
+      "args": [
+       {
+        "k": "col",
+        "name": "total_value"
+       },
+       {
+        "k": "arith",
+        "op": "mul",
+        "l": {
+         "k": "col",
+         "name": "previous_gwp"
+        },
+        "r": {
+         "k": "const",
+         "t": "float",
+         "v": 1.2
+        }
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "op": "column",
+   "layer": "model_scaled",
+   "table": "risk",
+   "column": "model_scaled",
+   "expr": {
+    "k": "arith",
+    "op": "add",
+    "l": {
+     "k": "arith",
+     "op": "mul",
+     "l": {
+      "k": "col",
+      "name": "model_score"
+     },
+     "r": {
+      "k": "const",
+      "t": "float",
+      "v": 1.5
+     }
+    },
+    "r": {
+     "k": "const",
+     "t": "int",
+     "v": 2
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "model_total",
+   "table": "policy",
+   "column": "model_total",
+   "expr": {
+    "k": "agg",
+    "source": "risk",
+    "func": "sum",
+    "column": "model_score",
+    "target_key": "policy_number",
+    "source_key": "policy_number",
+    "fill": {
+     "k": "const",
+     "t": "float",
+     "v": "nan"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "model_mixed",
+   "table": "risk",
+   "column": "model_mixed",
+   "expr": {
+    "k": "arith",
+    "op": "mul",
+    "l": {
+     "k": "col",
+     "name": "model_score"
+    },
+    "r": {
+     "k": "col",
+     "name": "age"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "limit_or_zero",
+   "table": "risk",
+   "column": "limit_or_zero",
+   "expr": {
+    "k": "call",
+    "f": "fillna",
+    "args": [
+     {
+      "k": "col",
+      "name": "limit_total"
+     },
+     {
+      "k": "const",
+      "t": "int",
+      "v": 0
+     }
+    ]
+   }
+  },
+  {
+   "op": "drop_tables",
+   "layer": "drop_cover_agg",
+   "tables": [
+    "cover_agg"
+   ]
+  },
+  {
+   "op": "rename",
+   "layer": "rename_risk",
+   "table": "risk",
+   "columns": [
+    [
+     "first_cover",
+     "main_cover"
+    ]
+   ]
+  },
+  {
+   "op": "drop_columns",
+   "layer": "drop_usage_missing",
+   "table": "risk",
+   "columns": [
+    "usage_missing"
+   ]
+  }
+ ]
+}

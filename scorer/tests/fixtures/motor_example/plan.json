@@ -1,0 +1,1453 @@
+{
+ "format": "open-rating-plan",
+ "version": 1,
+ "source_accessors": [],
+ "models": {
+  "motor_risk_cost_onnx": {
+   "path": "models/motor_risk_cost_onnx.onnx",
+   "sha256": "44f5f833b9ad45555819203fd6fb7123cc1fe034899b61c7ce12dbde8b8ac7ed"
+  }
+ },
+ "steps": [
+  {
+   "op": "column",
+   "layer": "risk.transaction_type",
+   "table": "risk",
+   "column": "risk.transaction_type",
+   "expr": {
+    "k": "agg",
+    "source": "policy",
+    "func": "first",
+    "column": "policy.transaction_type",
+    "target_key": "risk.policy_number",
+    "source_key": "policy.policy_number",
+    "fill": {
+     "k": "const",
+     "t": "float",
+     "v": "nan"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "risk.customer_tenure",
+   "table": "risk",
+   "column": "risk.customer_tenure",
+   "expr": {
+    "k": "agg",
+    "source": "policy",
+    "func": "first",
+    "column": "policy.customer_tenure",
+    "target_key": "risk.policy_number",
+    "source_key": "policy.policy_number",
+    "fill": {
+     "k": "const",
+     "t": "float",
+     "v": "nan"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "risk.risk_age_band",
+   "table": "risk",
+   "column": "risk.risk_age_band",
+   "expr": {
+    "k": "cut",
+    "x": {
+     "k": "col",
+     "name": "risk.driver_youngest_age"
+    },
+    "edges": [
+     15.0,
+     25.0,
+     35.0,
+     45.0,
+     55.0,
+     65.0,
+     "inf"
+    ],
+    "labels": [
+     "15-24",
+     "25-34",
+     "35-44",
+     "45-54",
+     "55-64",
+     "65+"
+    ],
+    "right": true,
+    "include_lowest": false
+   }
+  },
+  {
+   "op": "column",
+   "layer": "cover.cover_flag_hire_car",
+   "table": "cover",
+   "column": "cover.cover_flag_hire_car",
+   "expr": {
+    "k": "call",
+    "f": "where",
+    "args": [
+     {
+      "k": "cmp",
+      "op": "eq",
+      "l": {
+       "k": "col",
+       "name": "cover.cover_type"
+      },
+      "r": {
+       "k": "const",
+       "t": "str",
+       "v": "hire_car"
+      }
+     },
+     {
+      "k": "const",
+      "t": "int",
+      "v": 1
+     },
+     {
+      "k": "const",
+      "t": "int",
+      "v": 0
+     }
+    ]
+   }
+  },
+  {
+   "op": "column",
+   "layer": "policy.vehicle_count",
+   "table": "policy",
+   "column": "policy.vehicle_count",
+   "expr": {
+    "k": "agg",
+    "source": "risk",
+    "func": "count",
+    "column": "risk.risk_number",
+    "target_key": "policy.policy_number",
+    "source_key": "risk.policy_number",
+    "fill": {
+     "k": "const",
+     "t": "int",
+     "v": 0
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "policy.average_number_vehicles",
+   "table": "policy",
+   "column": "policy.average_number_vehicles",
+   "expr": {
+    "k": "agg",
+    "source": "claims_history",
+    "func": "sum",
+    "column": "claims_history.average_number_vehicles",
+    "target_key": "policy.policy_number",
+    "source_key": "claims_history.policy_number",
+    "fill": {
+     "k": "const",
+     "t": "float",
+     "v": "nan"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "policy.claim_count",
+   "table": "policy",
+   "column": "policy.claim_count",
+   "expr": {
+    "k": "agg",
+    "source": "claims_history",
+    "func": "sum",
+    "column": "claims_history.claim_count",
+    "target_key": "policy.policy_number",
+    "source_key": "claims_history.policy_number",
+    "fill": {
+     "k": "const",
+     "t": "float",
+     "v": "nan"
+    }
+   }
+  },
+  {
+   "op": "rating_tables",
+   "layer": "risk.demand_multiplier_individual",
+   "table": "risk",
+   "column": "risk.demand_multiplier_individual",
+   "tables": [
+    {
+     "name": "risk_number",
+     "keys": [
+      "risk.risk_number"
+     ],
+     "key_rows": [
+      [
+       "temp"
+      ]
+     ],
+     "value_dtype": "f64",
+     "values": [
+      1.0
+     ],
+     "default": 1.0
+    }
+   ],
+   "formula": {
+    "k": "rt",
+    "table": "risk_number"
+   }
+  },
+  {
+   "op": "column",
+   "layer": "cat_onehot__risk_usage_Private",
+   "table": "risk",
+   "column": "cat_onehot__risk_usage_Private",
+   "expr": {
+    "k": "call",
+    "f": "astype_int",
+    "args": [
+     {
+      "k": "cmp",
+      "op": "eq",
+      "l": {
+       "k": "col",
+       "name": "risk.vehicle_usage"
+      },
+      "r": {
+       "k": "const",
+       "t": "str",
+       "v": "Private"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "op": "column",
+   "layer": "cat_onehot__risk_usage_Rideshare",
+   "table": "risk",
+   "column": "cat_onehot__risk_usage_Rideshare",
+   "expr": {
+    "k": "call",
+    "f": "astype_int",
+    "args": [
+     {
+      "k": "cmp",
+      "op": "eq",
+      "l": {
+       "k": "col",
+       "name": "risk.vehicle_usage"
+      },
+      "r": {
+       "k": "const",
+       "t": "str",
+       "v": "Rideshare"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "op": "column",
+   "layer": "risk.reporting_previous_gwp",
+   "table": "risk",
+   "column": "risk.reporting_previous_gwp",
+   "expr": {
+    "k": "col",
+    "name": "risk.previous_gwp"
+   }
+  },
+  {
+   "op": "join",
+   "layer": "claims_history_ibnr",
+   "left": "claims_history",
+   "right": {
+    "catalog": {
+     "columns": [
+      {
+       "name": "term",
+       "dtype": "i64",
+       "values": [
+        -1,
+        -2,
+        -3,
+        -4,
+        -5,
+        -6,
+        -7
+       ]
+      },
+      {
+       "name": "ibnr_factor",
+       "dtype": "f64",
+       "values": [
+        1.3,
+        1.1,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ]
+      }
+     ]
+    }
+   },
+   "left_on": [
+    "claims_history.term"
+   ],
+   "right_on": [
+    "term"
+   ],
+   "output": "claims_history",
+   "columns": [
+    "ibnr_factor"
+   ],
+   "suffixes": [
+    "",
+    "_right"
+   ]
+  },
+  {
+   "op": "column",
+   "layer": "cat_onehot__transaction_type_RN",
+   "table": "risk",
+   "column": "cat_onehot__transaction_type_RN",
+   "expr": {
+    "k": "call",
+    "f": "astype_int",
+    "args": [
+     {
+      "k": "cmp",
+      "op": "eq",
+      "l": {
+       "k": "col",
+       "name": "risk.transaction_type"
+      },
+      "r": {
+       "k": "const",
+       "t": "str",
+       "v": "RN"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "op": "column",
+   "layer": "risk.customer_tenure_band",
+   "table": "risk",
+   "column": "risk.customer_tenure_band",
+   "expr": {
+    "k": "cut",
+    "x": {
+     "k": "col",
+     "name": "risk.customer_tenure"
+    },
+    "edges": [
+     -1.0,
+     5.0,
+     10.0,
+     "inf"
+    ],
+    "labels": [
+     "0-5",
+     "6-10",
+     "10+"
+    ],
+    "right": true,
+    "include_lowest": false
+   }
+  },
+  {
+   "op": "column",
+   "layer": "risk.cover_flag_hire_car",
+   "table": "risk",
+   "column": "risk.cover_flag_hire_car",
+   "expr": {
+    "k": "agg",
+    "source": "cover",
+    "func": "max",
+    "column": "cover.cover_flag_hire_car",
+    "target_key": "risk.risk_number",
+    "source_key": "cover.risk_number",
+    "fill": {
+     "k": "const",
+     "t": "float",
+     "v": "nan"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "claims_history.incurred_ultimate",
+   "table": "claims_history",
+   "column": "claims_history.incurred_ultimate",
+   "expr": {
+    "k": "arith",
+    "op": "mul",
+    "l": {
+     "k": "col",
+     "name": "claims_history.incurred"
+    },
+    "r": {
+     "k": "col",
+     "name": "ibnr_factor"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "policy.credibility_weighting",
+   "table": "policy",
+   "column": "policy.credibility_weighting",
+   "expr": {
+    "k": "arith",
+    "op": "div",
+    "l": {
+     "k": "col",
+     "name": "policy.claim_count"
+    },
+    "r": {
+     "k": "arith",
+     "op": "add",
+     "l": {
+      "k": "col",
+      "name": "policy.claim_count"
+     },
+     "r": {
+      "k": "const",
+      "t": "int",
+      "v": 100
+     }
+    }
+   }
+  },
+  {
+   "op": "rating_tables",
+   "layer": "risk.demand_multiplier",
+   "table": "risk",
+   "column": "risk.demand_multiplier",
+   "tables": [
+    {
+     "name": "risk_age_band",
+     "keys": [
+      "risk.risk_age_band"
+     ],
+     "key_rows": [
+      [
+       "15-24"
+      ],
+      [
+       "25-34"
+      ],
+      [
+       "35-44"
+      ],
+      [
+       "45-54"
+      ],
+      [
+       "55-64"
+      ],
+      [
+       "65+"
+      ]
+     ],
+     "value_dtype": "f64",
+     "values": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0
+     ],
+     "default": 1.0
+    },
+    {
+     "name": "customer_tenure_band",
+     "keys": [
+      "risk.customer_tenure_band"
+     ],
+     "key_rows": [
+      [
+       "0-5"
+      ],
+      [
+       "6-10"
+      ],
+      [
+       "10+"
+      ]
+     ],
+     "value_dtype": "f64",
+     "values": [
+      1.0,
+      1.0,
+      1.0
+     ],
+     "default": 1.0
+    }
+   ],
+   "formula": {
+    "k": "arith",
+    "op": "mul",
+    "l": {
+     "k": "rt",
+     "table": "risk_age_band"
+    },
+    "r": {
+     "k": "rt",
+     "table": "customer_tenure_band"
+    }
+   }
+  },
+  {
+   "op": "onnx",
+   "layer": "risk.pred_claim_cost",
+   "table": "risk",
+   "column": "risk.pred_claim_cost",
+   "model": "motor_risk_cost_onnx",
+   "inputs": [
+    [
+     "driver_youngest_age",
+     "risk.driver_youngest_age"
+    ],
+    [
+     "vehicle_market_value",
+     "risk.vehicle_market_value"
+    ],
+    [
+     "risk_usage",
+     "risk.vehicle_usage"
+    ],
+    [
+     "transaction_type",
+     "risk.transaction_type"
+    ],
+    [
+     "claims_history_claim_count_5_years",
+     "risk.claims_history_claim_count_5_years"
+    ],
+    [
+     "coverage_hire_car",
+     "risk.cover_flag_hire_car"
+    ],
+    [
+     "driver_youngest_occupation",
+     "risk.driver_youngest_occupation"
+    ],
+    [
+     "location_geoid",
+     "risk.location_geoid"
+    ],
+    [
+     "location_population",
+     "risk.location_population"
+    ],
+    [
+     "location_proportion_white",
+     "risk.location_proportion_white"
+    ],
+    [
+     "location_statefp",
+     "risk.location_statefp"
+    ],
+    [
+     "risk_average_milage",
+     "risk.average_mileage"
+    ],
+    [
+     "risk_basic_excess",
+     "risk.basic_excess"
+    ],
+    [
+     "risk_customer_tenure",
+     "risk.customer_tenure"
+    ],
+    [
+     "vehicle_age",
+     "risk.vehicle_age"
+    ],
+    [
+     "vehicle_fuel_type",
+     "risk.vehicle_fuel_type"
+    ],
+    [
+     "vehicle_make",
+     "risk.vehicle_make"
+    ]
+   ]
+  },
+  {
+   "op": "column",
+   "layer": "claims_history.cost_per_vehicle_ultimate",
+   "table": "claims_history",
+   "column": "claims_history.cost_per_vehicle_ultimate",
+   "expr": {
+    "k": "arith",
+    "op": "div",
+    "l": {
+     "k": "col",
+     "name": "claims_history.incurred_ultimate"
+    },
+    "r": {
+     "k": "col",
+     "name": "claims_history.average_number_vehicles"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "policy.incurred_ultimate",
+   "table": "policy",
+   "column": "policy.incurred_ultimate",
+   "expr": {
+    "k": "agg",
+    "source": "claims_history",
+    "func": "sum",
+    "column": "claims_history.incurred_ultimate",
+    "target_key": "policy.policy_number",
+    "source_key": "claims_history.policy_number",
+    "fill": {
+     "k": "const",
+     "t": "float",
+     "v": "nan"
+    }
+   }
+  },
+  {
+   "op": "join",
+   "layer": "policy_assumptions_cap_cup",
+   "left": "risk",
+   "right": {
+    "catalog": {
+     "columns": [
+      {
+       "name": "customer_tenure_band",
+       "dtype": "str",
+       "values": [
+        "0-5",
+        "6-10",
+        "10+"
+       ]
+      },
+      {
+       "name": "cap_percentage",
+       "dtype": "f64",
+       "values": [
+        0.5,
+        0.2,
+        0.1
+       ]
+      },
+      {
+       "name": "cup_percentage",
+       "dtype": "f64",
+       "values": [
+        -0.05,
+        -0.1,
+        -0.2
+       ]
+      }
+     ]
+    }
+   },
+   "left_on": [
+    "risk.customer_tenure_band"
+   ],
+   "right_on": [
+    "customer_tenure_band"
+   ],
+   "output": "risk",
+   "columns": [
+    "cap_percentage",
+    "cup_percentage"
+   ],
+   "suffixes": [
+    "",
+    "_right"
+   ]
+  },
+  {
+   "op": "column",
+   "layer": "cap_percentage_filled",
+   "table": "risk",
+   "column": "cap_percentage_filled",
+   "expr": {
+    "k": "call",
+    "f": "fillna",
+    "args": [
+     {
+      "k": "col",
+      "name": "cap_percentage"
+     },
+     {
+      "k": "const",
+      "t": "int",
+      "v": 2
+     }
+    ]
+   }
+  },
+  {
+   "op": "column",
+   "layer": "cup_percentage_filled",
+   "table": "risk",
+   "column": "cup_percentage_filled",
+   "expr": {
+    "k": "call",
+    "f": "fillna",
+    "args": [
+     {
+      "k": "col",
+      "name": "cup_percentage"
+     },
+     {
+      "k": "const",
+      "t": "float",
+      "v": -0.5
+     }
+    ]
+   }
+  },
+  {
+   "op": "column",
+   "layer": "policy.pred_claim_cost",
+   "table": "policy",
+   "column": "policy.pred_claim_cost",
+   "expr": {
+    "k": "agg",
+    "source": "risk",
+    "func": "sum",
+    "column": "risk.pred_claim_cost",
+    "target_key": "policy.policy_number",
+    "source_key": "risk.policy_number",
+    "fill": {
+     "k": "const",
+     "t": "float",
+     "v": "nan"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "policy.cost_per_vehicle",
+   "table": "policy",
+   "column": "policy.cost_per_vehicle",
+   "expr": {
+    "k": "arith",
+    "op": "div",
+    "l": {
+     "k": "col",
+     "name": "policy.incurred_ultimate"
+    },
+    "r": {
+     "k": "col",
+     "name": "policy.average_number_vehicles"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "risk.policy_pred_claim_cost",
+   "table": "risk",
+   "column": "risk.policy_pred_claim_cost",
+   "expr": {
+    "k": "agg",
+    "source": "policy",
+    "func": "sum",
+    "column": "policy.pred_claim_cost",
+    "target_key": "risk.policy_number",
+    "source_key": "policy.policy_number",
+    "fill": {
+     "k": "const",
+     "t": "float",
+     "v": "nan"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "policy.claims_rated_pred_claim_cost",
+   "table": "policy",
+   "column": "policy.claims_rated_pred_claim_cost",
+   "expr": {
+    "k": "arith",
+    "op": "mul",
+    "l": {
+     "k": "col",
+     "name": "policy.cost_per_vehicle"
+    },
+    "r": {
+     "k": "col",
+     "name": "policy.vehicle_count"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "policy.premium_stat_prem_risk_cost",
+   "table": "policy",
+   "column": "policy.premium_stat_prem_risk_cost",
+   "expr": {
+    "k": "arith",
+    "op": "add",
+    "l": {
+     "k": "arith",
+     "op": "mul",
+     "l": {
+      "k": "col",
+      "name": "policy.credibility_weighting"
+     },
+     "r": {
+      "k": "col",
+      "name": "policy.claims_rated_pred_claim_cost"
+     }
+    },
+    "r": {
+     "k": "arith",
+     "op": "mul",
+     "l": {
+      "k": "arith",
+      "op": "sub",
+      "l": {
+       "k": "const",
+       "t": "int",
+       "v": 1
+      },
+      "r": {
+       "k": "col",
+       "name": "policy.credibility_weighting"
+      }
+     },
+     "r": {
+      "k": "col",
+      "name": "policy.pred_claim_cost"
+     }
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "risk.premium_stat_prem_risk_cost",
+   "table": "risk",
+   "column": "risk.premium_stat_prem_risk_cost",
+   "expr": {
+    "k": "arith",
+    "op": "div",
+    "l": {
+     "k": "arith",
+     "op": "mul",
+     "l": {
+      "k": "agg",
+      "source": "policy",
+      "func": "sum",
+      "column": "policy.premium_stat_prem_risk_cost",
+      "target_key": "risk.policy_number",
+      "source_key": "policy.policy_number",
+      "fill": {
+       "k": "const",
+       "t": "float",
+       "v": "nan"
+      }
+     },
+     "r": {
+      "k": "col",
+      "name": "risk.pred_claim_cost"
+     }
+    },
+    "r": {
+     "k": "col",
+     "name": "risk.policy_pred_claim_cost"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "risk.premium_stat_prem_administration_expense",
+   "table": "risk",
+   "column": "risk.premium_stat_prem_administration_expense",
+   "expr": {
+    "k": "arith",
+    "op": "add",
+    "l": {
+     "k": "const",
+     "t": "float",
+     "v": 75.0
+    },
+    "r": {
+     "k": "arith",
+     "op": "mul",
+     "l": {
+      "k": "const",
+      "t": "float",
+      "v": 0.02
+     },
+     "r": {
+      "k": "col",
+      "name": "risk.premium_stat_prem_risk_cost"
+     }
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "risk.premium_stat_prem_claims_handling_expense",
+   "table": "risk",
+   "column": "risk.premium_stat_prem_claims_handling_expense",
+   "expr": {
+    "k": "arith",
+    "op": "add",
+    "l": {
+     "k": "const",
+     "t": "float",
+     "v": 0.0
+    },
+    "r": {
+     "k": "arith",
+     "op": "mul",
+     "l": {
+      "k": "const",
+      "t": "float",
+      "v": 0.05
+     },
+     "r": {
+      "k": "col",
+      "name": "risk.premium_stat_prem_risk_cost"
+     }
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "risk.premium_stat_prem_commission_expense",
+   "table": "risk",
+   "column": "risk.premium_stat_prem_commission_expense",
+   "expr": {
+    "k": "arith",
+    "op": "add",
+    "l": {
+     "k": "const",
+     "t": "float",
+     "v": 0.0
+    },
+    "r": {
+     "k": "arith",
+     "op": "mul",
+     "l": {
+      "k": "const",
+      "t": "float",
+      "v": 0.05
+     },
+     "r": {
+      "k": "col",
+      "name": "risk.premium_stat_prem_risk_cost"
+     }
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "risk.premium_stat_prem_reinsurance_expense",
+   "table": "risk",
+   "column": "risk.premium_stat_prem_reinsurance_expense",
+   "expr": {
+    "k": "arith",
+    "op": "mul",
+    "l": {
+     "k": "const",
+     "t": "float",
+     "v": 0.0
+    },
+    "r": {
+     "k": "col",
+     "name": "risk.premium_stat_prem_risk_cost"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "risk.premium_stat_prem_investment_income",
+   "table": "risk",
+   "column": "risk.premium_stat_prem_investment_income",
+   "expr": {
+    "k": "arith",
+    "op": "mul",
+    "l": {
+     "k": "const",
+     "t": "float",
+     "v": -0.05
+    },
+    "r": {
+     "k": "col",
+     "name": "risk.premium_stat_prem_risk_cost"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "risk.premium_stat_prem_target_profit_margin",
+   "table": "risk",
+   "column": "risk.premium_stat_prem_target_profit_margin",
+   "expr": {
+    "k": "arith",
+    "op": "mul",
+    "l": {
+     "k": "const",
+     "t": "float",
+     "v": 0.1
+    },
+    "r": {
+     "k": "col",
+     "name": "risk.premium_stat_prem_risk_cost"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "risk.premium_stat_prem_total",
+   "table": "risk",
+   "column": "risk.premium_stat_prem_total",
+   "expr": {
+    "k": "arith",
+    "op": "add",
+    "l": {
+     "k": "arith",
+     "op": "add",
+     "l": {
+      "k": "arith",
+      "op": "add",
+      "l": {
+       "k": "arith",
+       "op": "add",
+       "l": {
+        "k": "arith",
+        "op": "add",
+        "l": {
+         "k": "arith",
+         "op": "add",
+         "l": {
+          "k": "col",
+          "name": "risk.premium_stat_prem_risk_cost"
+         },
+         "r": {
+          "k": "col",
+          "name": "risk.premium_stat_prem_administration_expense"
+         }
+        },
+        "r": {
+         "k": "col",
+         "name": "risk.premium_stat_prem_claims_handling_expense"
+        }
+       },
+       "r": {
+        "k": "col",
+        "name": "risk.premium_stat_prem_commission_expense"
+       }
+      },
+      "r": {
+       "k": "col",
+       "name": "risk.premium_stat_prem_reinsurance_expense"
+      }
+     },
+     "r": {
+      "k": "col",
+      "name": "risk.premium_stat_prem_investment_income"
+     }
+    },
+    "r": {
+     "k": "col",
+     "name": "risk.premium_stat_prem_target_profit_margin"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "risk.premium_demand_total",
+   "table": "risk",
+   "column": "risk.premium_demand_total",
+   "expr": {
+    "k": "arith",
+    "op": "mul",
+    "l": {
+     "k": "arith",
+     "op": "mul",
+     "l": {
+      "k": "col",
+      "name": "risk.premium_stat_prem_total"
+     },
+     "r": {
+      "k": "col",
+      "name": "risk.demand_multiplier"
+     }
+    },
+    "r": {
+     "k": "col",
+     "name": "risk.demand_multiplier_individual"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "risk.reporting_offered_technical_premium",
+   "table": "risk",
+   "column": "risk.reporting_offered_technical_premium",
+   "expr": {
+    "k": "col",
+    "name": "risk.premium_stat_prem_total"
+   }
+  },
+  {
+   "op": "column",
+   "layer": "risk.premium_comm_prem_cap_cup",
+   "table": "risk",
+   "column": "risk.premium_comm_prem_cap_cup",
+   "expr": {
+    "k": "call",
+    "f": "where",
+    "args": [
+     {
+      "k": "call",
+      "f": "isna",
+      "args": [
+       {
+        "k": "col",
+        "name": "risk.previous_gwp"
+       }
+      ]
+     },
+     {
+      "k": "col",
+      "name": "risk.premium_demand_total"
+     },
+     {
+      "k": "call",
+      "f": "maximum",
+      "args": [
+       {
+        "k": "call",
+        "f": "minimum",
+        "args": [
+         {
+          "k": "col",
+          "name": "risk.premium_demand_total"
+         },
+         {
+          "k": "arith",
+          "op": "mul",
+          "l": {
+           "k": "col",
+           "name": "risk.previous_gwp"
+          },
+          "r": {
+           "k": "arith",
+           "op": "add",
+           "l": {
+            "k": "const",
+            "t": "int",
+            "v": 1
+           },
+           "r": {
+            "k": "col",
+            "name": "cap_percentage_filled"
+           }
+          }
+         }
+        ]
+       },
+       {
+        "k": "arith",
+        "op": "mul",
+        "l": {
+         "k": "col",
+         "name": "risk.previous_gwp"
+        },
+        "r": {
+         "k": "arith",
+         "op": "add",
+         "l": {
+          "k": "const",
+          "t": "int",
+          "v": 1
+         },
+         "r": {
+          "k": "col",
+          "name": "cup_percentage_filled"
+         }
+        }
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "op": "column",
+   "layer": "risk.premium_final",
+   "table": "risk",
+   "column": "risk.premium_final",
+   "expr": {
+    "k": "col",
+    "name": "risk.premium_comm_prem_cap_cup"
+   }
+  },
+  {
+   "op": "column",
+   "layer": "risk.gwp",
+   "table": "risk",
+   "column": "risk.gwp",
+   "expr": {
+    "k": "col",
+    "name": "risk.premium_comm_prem_cap_cup"
+   }
+  },
+  {
+   "op": "column",
+   "layer": "risk.reporting_offered_gwp",
+   "table": "risk",
+   "column": "risk.reporting_offered_gwp",
+   "expr": {
+    "k": "col",
+    "name": "risk.premium_final"
+   }
+  },
+  {
+   "op": "column",
+   "layer": "policy.gwp",
+   "table": "policy",
+   "column": "policy.gwp",
+   "expr": {
+    "k": "agg",
+    "source": "risk",
+    "func": "sum",
+    "column": "risk.gwp",
+    "target_key": "policy.policy_number",
+    "source_key": "risk.policy_number",
+    "fill": {
+     "k": "const",
+     "t": "float",
+     "v": "nan"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "num__distance_to_competitor_percent",
+   "table": "risk",
+   "column": "num__distance_to_competitor_percent",
+   "expr": {
+    "k": "call",
+    "f": "where",
+    "args": [
+     {
+      "k": "cmp",
+      "op": "ne",
+      "l": {
+       "k": "col",
+       "name": "risk.competitor_premiums_average"
+      },
+      "r": {
+       "k": "const",
+       "t": "int",
+       "v": 0
+      }
+     },
+     {
+      "k": "arith",
+      "op": "div",
+      "l": {
+       "k": "arith",
+       "op": "sub",
+       "l": {
+        "k": "col",
+        "name": "risk.gwp"
+       },
+       "r": {
+        "k": "col",
+        "name": "risk.competitor_premiums_average"
+       }
+      },
+      "r": {
+       "k": "col",
+       "name": "risk.competitor_premiums_average"
+      }
+     },
+     {
+      "k": "const",
+      "t": "float",
+      "v": "nan"
+     }
+    ]
+   }
+  },
+  {
+   "op": "column",
+   "layer": "num__distance_to_competitor_abs",
+   "table": "risk",
+   "column": "num__distance_to_competitor_abs",
+   "expr": {
+    "k": "call",
+    "f": "abs",
+    "args": [
+     {
+      "k": "arith",
+      "op": "sub",
+      "l": {
+       "k": "col",
+       "name": "risk.gwp"
+      },
+      "r": {
+       "k": "col",
+       "name": "risk.competitor_premiums_average"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "op": "column",
+   "layer": "num__price_change",
+   "table": "risk",
+   "column": "num__price_change",
+   "expr": {
+    "k": "call",
+    "f": "where",
+    "args": [
+     {
+      "k": "cmp",
+      "op": "ne",
+      "l": {
+       "k": "col",
+       "name": "risk.previous_gwp"
+      },
+      "r": {
+       "k": "const",
+       "t": "int",
+       "v": 0
+      }
+     },
+     {
+      "k": "arith",
+      "op": "div",
+      "l": {
+       "k": "arith",
+       "op": "sub",
+       "l": {
+        "k": "col",
+        "name": "risk.gwp"
+       },
+       "r": {
+        "k": "col",
+        "name": "risk.previous_gwp"
+       }
+      },
+      "r": {
+       "k": "col",
+       "name": "risk.previous_gwp"
+      }
+     },
+     {
+      "k": "const",
+      "t": "float",
+      "v": "nan"
+     }
+    ]
+   }
+  },
+  {
+   "op": "column",
+   "layer": "num__gwp",
+   "table": "risk",
+   "column": "num__gwp",
+   "expr": {
+    "k": "col",
+    "name": "risk.gwp"
+   }
+  },
+  {
+   "op": "column",
+   "layer": "risk.reporting_offered_profit",
+   "table": "risk",
+   "column": "risk.reporting_offered_profit",
+   "expr": {
+    "k": "arith",
+    "op": "sub",
+    "l": {
+     "k": "col",
+     "name": "risk.reporting_offered_gwp"
+    },
+    "r": {
+     "k": "col",
+     "name": "risk.reporting_offered_technical_premium"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "risk.reporting_offered_loss_ratio",
+   "table": "risk",
+   "column": "risk.reporting_offered_loss_ratio",
+   "expr": {
+    "k": "arith",
+    "op": "div",
+    "l": {
+     "k": "col",
+     "name": "risk.reporting_offered_technical_premium"
+    },
+    "r": {
+     "k": "col",
+     "name": "risk.reporting_offered_gwp"
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "risk.reporting_offered_premium_change",
+   "table": "risk",
+   "column": "risk.reporting_offered_premium_change",
+   "expr": {
+    "k": "arith",
+    "op": "sub",
+    "l": {
+     "k": "arith",
+     "op": "div",
+     "l": {
+      "k": "col",
+      "name": "risk.reporting_offered_gwp"
+     },
+     "r": {
+      "k": "col",
+      "name": "risk.previous_gwp"
+     }
+    },
+    "r": {
+     "k": "const",
+     "t": "int",
+     "v": 1
+    }
+   }
+  },
+  {
+   "op": "column",
+   "layer": "risk.reporting_offered_profit_margin",
+   "table": "risk",
+   "column": "risk.reporting_offered_profit_margin",
+   "expr": {
+    "k": "arith",
+    "op": "div",
+    "l": {
+     "k": "col",
+     "name": "risk.reporting_offered_profit"
+    },
+    "r": {
+     "k": "col",
+     "name": "risk.reporting_offered_gwp"
+    }
+   }
+  }
+ ]
+}

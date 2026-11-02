@@ -1,0 +1,113 @@
+{
+ "inputs": {
+  "policy": [
+   {
+    "policy_number": "P1",
+    "tenure": 0,
+    "previous_gwp": 950.0,
+    "region": "north"
+   },
+   {
+    "policy_number": "P2",
+    "tenure": 7,
+    "previous_gwp": null,
+    "region": "south"
+   },
+   {
+    "policy_number": "P3",
+    "tenure": 12,
+    "previous_gwp": 2400.5,
+    "region": null
+   },
+   {
+    "policy_number": "P4",
+    "tenure": 3,
+    "previous_gwp": 0.0,
+    "region": "north"
+   }
+  ],
+  "risk": [
+   {
+    "policy_number": "P1",
+    "risk_number": 1,
+    "age": 19,
+    "value": 15000.0,
+    "usage": "Private"
+   },
+   {
+    "policy_number": "P1",
+    "risk_number": 2,
+    "age": 44,
+    "value": 23950.75,
+    "usage": "Rideshare"
+   },
+   {
+    "policy_number": "P2",
+    "risk_number": 3,
+    "age": 31,
+    "value": 8000.0,
+    "usage": null
+   },
+   {
+    "policy_number": "P3",
+    "risk_number": 4,
+    "age": 70,
+    "value": 55000.0,
+    "usage": "Private"
+   },
+   {
+    "policy_number": "P3",
+    "risk_number": 5,
+    "age": 12,
+    "value": 1234.5,
+    "usage": "Commercial"
+   },
+   {
+    "policy_number": "P3",
+    "risk_number": 6,
+    "age": 25,
+    "value": 99999.99,
+    "usage": "Private"
+   },
+   {
+    "policy_number": "P9",
+    "risk_number": 7,
+    "age": 55,
+    "value": 4100.0,
+    "usage": "Private"
+   }
+  ],
+  "cover": [
+   {
+    "risk_number": 1,
+    "cover_type": "core",
+    "limit": 1000
+   },
+   {
+    "risk_number": 1,
+    "cover_type": "hire_car",
+    "limit": 250
+   },
+   {
+    "risk_number": 2,
+    "cover_type": "core",
+    "limit": 1500
+   },
+   {
+    "risk_number": 4,
+    "cover_type": "windscreen",
+    "limit": 300
+   },
+   {
+    "risk_number": 4,
+    "cover_type": "core",
+    "limit": 2000
+   },
+   {
+    "risk_number": 6,
+    "cover_type": "core",
+    "limit": 800
+   }
+  ]
+ }
+}
