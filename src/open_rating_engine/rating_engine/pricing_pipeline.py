@@ -126,8 +126,6 @@ class PyfuncPricingPipeline(PythonModel):
         not fetch remote storage: a caller holding artifacts elsewhere (blob storage, S3,
         a model registry) downloads them and passes the local paths in the context.
         """
-        import jpype
-        import jpype.imports
         import sys
 
         for name, path in context.artifacts.items():
@@ -139,24 +137,29 @@ class PyfuncPricingPipeline(PythonModel):
 
         # Only the H2O MOJO scorer needs a JVM. Pipelines without H2O layers
         # (e.g. pure rating-table / column-calculation algorithms) must score
-        # without one — and without requiring an 'h2o_gen_model' artifact.
+        # without one — and without requiring an 'h2o_gen_model' artifact, or
+        # jpype (the h2o extra) being installed.
         h2o_layers = [l for l in self.layers.values() if isinstance(l, H2OScoringParameter)]
 
-        if h2o_layers and not jpype.isJVMStarted():
-            genmodel = context.artifacts.get('h2o_gen_model')
-            if not genmodel:
-                raise ValueError(
-                    "H2O scoring layer(s) present but no 'h2o_gen_model' artifact "
-                    "was provided to load_context."
+        if h2o_layers:
+            import jpype
+            import jpype.imports
+
+            if not jpype.isJVMStarted():
+                genmodel = context.artifacts.get('h2o_gen_model')
+                if not genmodel:
+                    raise ValueError(
+                        "H2O scoring layer(s) present but no 'h2o_gen_model' artifact "
+                        "was provided to load_context."
+                    )
+                print('Load Context: Starting JVM...', file=sys.stderr)
+                jpype.startJVM(
+                    context.model_config.get('jvm_path', "") or jpype.getDefaultJVMPath(),
+                    context.model_config.get('java_options', ""),
+                    classpath=[genmodel],
                 )
-            print('Load Context: Starting JVM...', file=sys.stderr)
-            jpype.startJVM(
-                context.model_config.get('jvm_path', "") or jpype.getDefaultJVMPath(),
-                context.model_config.get('java_options', ""),
-                classpath=[genmodel],
-            )
-        elif jpype.isJVMStarted():
-            print('Load Context: JVM already started.', file=sys.stderr)
+            else:
+                print('Load Context: JVM already started.', file=sys.stderr)
 
         print(f"Load Context: {context.artifacts}, {context.model_config}", file=sys.stderr)
 
