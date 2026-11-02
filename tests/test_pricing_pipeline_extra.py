@@ -109,7 +109,7 @@ def test_predict_wraps_unexpected_errors_as_runtime(pipeline, sample_data):
     pipeline.add_parameter(
         TableJoin("j", "policy", "nonexistent_table", left_on="policy_number")
     )
-    with pytest.raises(RuntimeError, match="Unexpected error in wave"):
+    with pytest.raises(RuntimeError, match="Unexpected error in layer 'j'"):
         pipeline.predict(sample_data)
 
 

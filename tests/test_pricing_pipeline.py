@@ -201,7 +201,9 @@ def test_profile_predict_returns_timing_frame(pipeline, sample_data, mock_contex
     pipeline.add_parameter(ColumnCalculation("b", "policy", "y", "2"))
     data, timing = pipeline.profile_predict(mock_context, sample_data)
     assert "x" in data["policy"].columns
-    assert set(timing.columns) == {"wave", "layer", "type", "parallel", "elapsed_s"}
+    assert set(timing.columns) == {
+        "wave", "layer", "type", "parallel", "elapsed_s", "start_s", "end_s",
+    }
     assert set(timing["layer"]) == {"a", "b"}
 
 
