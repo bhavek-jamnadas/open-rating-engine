@@ -1,5 +1,7 @@
 """Extra pipeline coverage: load_context, non-local I/O, profiling, errors."""
 
+import sys
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -63,6 +65,19 @@ def test_load_context_does_not_fetch_remote_artifacts(monkeypatch):
     assert ctx.artifacts == {"model": url, "not_a_path": 42}
 
 
+def test_load_context_without_h2o_layers_does_not_need_jpype(monkeypatch):
+    """A pipeline with no H2O layers loads even when the h2o extra (jpype) is missing."""
+    monkeypatch.setitem(sys.modules, "jpype", None)
+    monkeypatch.setitem(sys.modules, "jpype.imports", None)
+
+    ctx = PythonModelContext(artifacts={}, model_config={"environment": "local"})
+    pipe = PyfuncPricingPipeline(ctx)
+    pipe.add_parameter(ColumnCalculation("c", "risk", "c", "df['a'] * 2"))
+    pipe.load_context(ctx)
+
+    assert pipe.context is ctx
+
+
 def test_non_local_environment_roundtrips_arrays(sample_data):
     ctx = PythonModelContext(
         artifacts={}, model_config={"environment": "cloud"}
@@ -109,7 +124,7 @@ def test_predict_wraps_unexpected_errors_as_runtime(pipeline, sample_data):
     pipeline.add_parameter(
         TableJoin("j", "policy", "nonexistent_table", left_on="policy_number")
     )
-    with pytest.raises(RuntimeError, match="Unexpected error in wave"):
+    with pytest.raises(RuntimeError, match="Unexpected error in layer 'j'"):
         pipeline.predict(sample_data)
 
 

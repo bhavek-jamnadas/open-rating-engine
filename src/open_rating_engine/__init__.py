@@ -39,12 +39,12 @@ __getattr__, __dir__, _exports = attach(
         ],
         ".data_processing.data_aging": ["apply_aging", "AgingRuleError"],
     },
-    submodules=["data_processing", "optimization", "rating_engine"],
+    submodules=["data_processing", "optimization", "rating_engine", "scoring_plan"],
 )
 __all__ = ["__version__", *_exports]
 
 if TYPE_CHECKING:
-    from . import data_processing, optimization, rating_engine
+    from . import data_processing, optimization, rating_engine, scoring_plan
     from .data_processing.data_aging import AgingRuleError, apply_aging
     from .rating_engine.pricing_layers import (
         BasePricingLayer,
