@@ -2008,6 +2008,59 @@ _ONNX_TYPE_TO_NUMPY = {
 }
 
 
+def _validate_derived(derived: Optional[List[Dict]]) -> List[Dict]:
+    """Formula columns: ``[{name, expression}]``, evaluated in order."""
+    derived = list(derived or [])
+    for d in derived:
+        if not isinstance(d, dict) or not d.get("name") or not isinstance(d.get("expression"), str):
+            raise ValueError("each derived entry needs a 'name' and a string 'expression'")
+    return derived
+
+
+def _mapped_working_frame(
+    layer_name: str, target_table: str, target_df: pd.DataFrame, column_map: Dict[str, str]
+) -> pd.DataFrame:
+    """A fresh frame holding ``target_df[src]`` under each mapped name."""
+    missing = [
+        f"{src} (for '{leaf}')"
+        for leaf, src in column_map.items()
+        if src not in target_df.columns
+    ]
+    if missing:
+        raise LayerCalculationError(
+            f"Layer '{layer_name}': source columns missing from '{target_table}': {missing}"
+        )
+    working = pd.DataFrame(index=target_df.index)
+    for leaf, src in column_map.items():
+        working[leaf] = target_df[src]
+    return working
+
+
+def _evaluate_derived(layer_name: str, working: pd.DataFrame, derived: List[Dict]) -> pd.DataFrame:
+    """Evaluate formula columns onto ``working`` in order — bare column names plus
+    ``np``/``pd``/``df``, under the restricted builtins every calculation layer uses.
+    Shared by ``GlmScoring`` and ``OnnxScoring`` so the two cannot evaluate a formula
+    differently (and the scoring-plan exporter compiles both the same way)."""
+    for d in derived:
+        dname, expr = d["name"], d["expression"]
+        namespace = {col: working[col] for col in working.columns}
+        namespace["np"] = np
+        namespace["pd"] = pd
+        namespace["df"] = working
+        try:
+            result = eval(  # noqa: S307 - restricted builtins, governance-gated
+                expr, {"__builtins__": ColumnCalculation._safe_builtins()}, namespace
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise LayerCalculationError(
+                f"Layer '{layer_name}': formula column '{dname}': {exc}"
+            ) from exc
+        if not isinstance(result, pd.Series):
+            result = pd.Series(result, index=working.index)
+        working[dname] = result.to_numpy()
+    return working
+
+
 class OnnxScoring(ColumnCalculation):
     """
     A pipeline layer that scores rows in a dataset table with an ONNX model and
@@ -2032,6 +2085,15 @@ class OnnxScoring(ColumnCalculation):
         the values are the columns read from ``target_table``.
     model_artifact_key : str
         Key in ``context.artifacts`` pointing to the exported ``.onnx`` file.
+    derived : list[dict], optional
+        Formula columns ``[{name, expression}]`` evaluated in order, exactly as
+        ``GlmScoring.derived``: bare column names plus ``np``/``pd``/``df``. When set,
+        ``column_map`` maps the formulas' raw LEAVES (and any model input fed
+        directly) to source columns, the formulas are evaluated on that working
+        frame, and every model input is then read from it by name — so a model
+        trained on a function of the raw data (``np.clip(age, 18, 80)``) scores from
+        the raw data. Omitted or empty: ``column_map`` maps model inputs directly,
+        as before.
     dependencies : list[str], optional
     description : str, optional
 
@@ -2043,6 +2105,10 @@ class OnnxScoring(ColumnCalculation):
     final prediction as their first output.
     """
 
+    # Class-level default: an OnnxScoring pickled by an engine before `derived` existed
+    # unpickles without the instance attribute, and must keep scoring as it always did.
+    derived: tuple = ()
+
     def __init__(
         self,
         name: str,
@@ -2052,9 +2118,14 @@ class OnnxScoring(ColumnCalculation):
         model_artifact_key: str,
         dependencies: Optional[List[str]] = None,
         description: str = "",
+        derived: Optional[List[Dict]] = None,
     ):
         if not column_map or not isinstance(column_map, dict):
             raise ValueError("column_map must be a non-empty {model_input: source} dict")
+        derived = _validate_derived(derived)
+        clash = sorted({d["name"] for d in derived} & set(column_map))
+        if clash:
+            raise ValueError(f"derived columns {clash} are also mapped in column_map")
 
         super().__init__(
             name=name,
@@ -2067,6 +2138,7 @@ class OnnxScoring(ColumnCalculation):
 
         self.model_artifact_key = model_artifact_key
         self.column_map = column_map
+        self.derived = derived
         self.session = None
         self.parameters = {
             "name": name,
@@ -2077,6 +2149,9 @@ class OnnxScoring(ColumnCalculation):
             "dependencies": dependencies,
             "description": description,
         }
+        # Only when used, so a layer without formulas serialises exactly as before.
+        if derived:
+            self.parameters["derived"] = derived
 
     @property
     def model_columns(self) -> List[str]:
@@ -2112,6 +2187,12 @@ class OnnxScoring(ColumnCalculation):
                 )
             self.session = self._load_model(context.artifacts[self.model_artifact_key])
 
+        missing = [inp.name for inp in self.session.get_inputs() if inp.name not in scoring_df.columns]
+        if missing:
+            raise LayerCalculationError(
+                f"Layer '{self.name}': model inputs {missing} are neither mapped in column_map "
+                "nor computed by a derived formula"
+            )
         feed = {}
         for inp in self.session.get_inputs():
             np_dtype = _ONNX_TYPE_TO_NUMPY.get(inp.type, np.float32)
@@ -2131,20 +2212,24 @@ class OnnxScoring(ColumnCalculation):
     ) -> pd.Series:
         target_df = data[self.target_table]
 
-        required = list(self.column_map.keys())
-        sources = [self.column_map[c] for c in required]
-        missing = [
-            f"{src} (for input '{req}')"
-            for req, src in zip(required, sources)
-            if src not in target_df.columns
-        ]
-        if missing:
-            raise LayerCalculationError(
-                f"Layer '{self.name}': source columns missing from '{self.target_table}': {missing}"
+        if self.derived:
+            working = _mapped_working_frame(self.name, self.target_table, target_df, self.column_map)
+            scoring_df = _evaluate_derived(self.name, working, self.derived)
+        else:
+            required = list(self.column_map.keys())
+            sources = [self.column_map[c] for c in required]
+            missing = [
+                f"{src} (for input '{req}')"
+                for req, src in zip(required, sources)
+                if src not in target_df.columns
+            ]
+            if missing:
+                raise LayerCalculationError(
+                    f"Layer '{self.name}': source columns missing from '{self.target_table}': {missing}"
+                )
+            scoring_df = target_df[sources].rename(
+                columns={self.column_map[c]: c for c in required}
             )
-        scoring_df = target_df[sources].rename(
-            columns={self.column_map[c]: c for c in required}
-        )
 
         try:
             result = self._score(scoring_df=scoring_df, context=context)
@@ -2160,12 +2245,15 @@ class OnnxScoring(ColumnCalculation):
         return result
 
     def _layer_params(self) -> dict:
-        return {
+        params = {
             "target_table": self.target_table,
             "output_column": self.output_column,
             "model_artifact_key": self.model_artifact_key,
             "column_map": self.column_map,
         }
+        if self.derived:
+            params["derived"] = self.derived
+        return params
 
     @classmethod
     def _from_dict(cls, d: dict) -> "OnnxScoring":
@@ -2177,6 +2265,7 @@ class OnnxScoring(ColumnCalculation):
             model_artifact_key=d["model_artifact_key"],
             dependencies=d.get("dependencies"),
             description=d.get("description", ""),
+            derived=d.get("derived"),
         )
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -2278,10 +2367,7 @@ class GlmScoring(ColumnCalculation):
             raise ValueError("terms must be a list")
         for t in terms:
             self._validate_term(t)
-        derived = derived or []
-        for d in derived:
-            if not isinstance(d, dict) or not d.get("name") or not isinstance(d.get("expression"), str):
-                raise ValueError("each derived entry needs a 'name' and a string 'expression'")
+        derived = _validate_derived(derived)
 
         super().__init__(
             name=name,
@@ -2347,42 +2433,11 @@ class GlmScoring(ColumnCalculation):
         ``apply_derived_columns`` (bare column names + ``np``/``pd``). The result
         carries every column a term reads (raw leaves + derived columns)."""
         if self.column_map:
-            missing = [
-                f"{src} (for '{leaf}')"
-                for leaf, src in self.column_map.items()
-                if src not in target_df.columns
-            ]
-            if missing:
-                raise LayerCalculationError(
-                    f"Layer '{self.name}': source columns missing from "
-                    f"'{self.target_table}': {missing}"
-                )
-            working = pd.DataFrame(index=target_df.index)
-            for leaf, src in self.column_map.items():
-                working[leaf] = target_df[src]
+            working = _mapped_working_frame(self.name, self.target_table, target_df, self.column_map)
         else:
             # Legacy / no mapping: read terms directly from the target table by name.
             working = target_df.copy() if self.derived else target_df
-
-        for d in self.derived:
-            dname, expr = d["name"], d["expression"]
-            namespace = {col: working[col] for col in working.columns}
-            namespace["np"] = np
-            namespace["pd"] = pd
-            namespace["df"] = working
-            try:
-                result = eval(  # noqa: S307 - restricted builtins, governance-gated
-                    expr, {"__builtins__": ColumnCalculation._safe_builtins()}, namespace
-                )
-            except Exception as exc:  # noqa: BLE001
-                raise LayerCalculationError(
-                    f"Layer '{self.name}': formula column '{dname}': {exc}"
-                ) from exc
-            if not isinstance(result, pd.Series):
-                result = pd.Series(result, index=working.index)
-            working[dname] = result.to_numpy()
-
-        return working
+        return _evaluate_derived(self.name, working, self.derived)
 
     def _term_contribution(self, term: Dict, src: pd.Series) -> pd.Series:
         treatment = term["treatment"]

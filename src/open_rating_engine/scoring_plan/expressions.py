@@ -109,7 +109,8 @@ class ExpressionScope:
         ``"column"`` for a ``ColumnCalculation`` (``df``, ``data``, ``catalog``,
         ``options`` and ``aggregate`` in scope), ``"rating_formula"`` for a
         ``RatingTablesLayer`` formula (each rating table is a name), or
-        ``"glm_derived"`` for a ``GlmScoring`` formula column (bare names are columns).
+        ``"glm_derived"`` for a ``GlmScoring`` or ``OnnxScoring`` formula column (bare
+        names are columns).
     """
 
     def __init__(

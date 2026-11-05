@@ -199,6 +199,16 @@ def kitchen_sink_pipeline(model_path: Path) -> PyfuncPricingPipeline:
         model_artifact_key="tiny_model",
         dependencies=["value_override"],
     ))
+    # The same model fed through formula columns (OnnxScoring.derived): `age` is a
+    # function of the raw age, `risk_id` an integer column feeding a string input.
+    add(OnnxScoring(
+        "model_score_derived", "risk", "model_score_derived",
+        column_map={"age_raw": "age", "value": "value", "usage": "usage", "rid": "risk_number"},
+        derived=[{"name": "age", "expression": "np.minimum(age_raw, 60) + 1"},
+                 {"name": "risk_id", "expression": "rid"}],
+        model_artifact_key="tiny_model",
+        dependencies=["value_override"],
+    ))
     add(ColumnCalculation("model_scaled", "risk", "model_scaled", "df['model_score'] * 1.5 + 2",
                           dependencies=["model_score"]))
     add(ColumnCalculation("model_total", "policy", "model_total",
