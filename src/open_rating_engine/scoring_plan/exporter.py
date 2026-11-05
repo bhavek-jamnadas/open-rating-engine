@@ -325,7 +325,7 @@ class _LayerExporter:
                 f"ONNX artifact {layer.model_artifact_key!r} was not found locally ({path!r})"
             )
         self.model_files[layer.model_artifact_key] = str(path)
-        return {
+        step = {
             "op": "onnx",
             "layer": layer.name,
             "table": layer.target_table,
@@ -333,6 +333,17 @@ class _LayerExporter:
             "model": layer.model_artifact_key,
             "inputs": [[model_input, source] for model_input, source in layer.column_map.items()],
         }
+        if layer.derived:
+            # Formula columns, compiled exactly as GlmScoring's (same evaluator in pandas).
+            # With them, `inputs` maps working-frame names (leaves) to source columns and
+            # every model input is read from the working frame by name. Emitted only when
+            # present, so a plan without formulas is byte-identical to before.
+            scope = ExpressionScope("glm_derived")
+            step["derived"] = [
+                {"name": d["name"], "expr": compile_expression(d["expression"], scope)}
+                for d in layer.derived
+            ]
+        return step
 
     def _glm(self, layer: GlmScoring) -> dict:
         if layer.unseen_policy != "baseline":

@@ -47,6 +47,10 @@ pub enum Step {
         column: String,
         model: String,
         inputs: Vec<(String, String)>,
+        /// Formula columns evaluated onto the working frame before scoring, exactly as
+        /// a `Glm` step's. Absent from plans written before `OnnxScoring.derived`.
+        #[serde(default)]
+        derived: Vec<Derived>,
     },
     Glm {
         layer: String,

@@ -124,6 +124,15 @@ def test_kitchen_sink_exports(kitchen_sink):
     assert exported == canonical
 
 
+def test_onnx_formulas_are_exported_only_where_used(kitchen_sink):
+    steps = {step["layer"]: step for step in export_plan(kitchen_sink).plan["steps"]}
+    plain, derived = steps["model_score"], steps["model_score_derived"]
+    assert "derived" not in plain
+    assert [d["name"] for d in derived["derived"]] == ["age", "risk_id"]
+    assert derived["inputs"] == [["age_raw", "age"], ["value", "value"], ["usage", "usage"],
+                                 ["rid", "risk_number"]]
+
+
 def test_every_blocker_is_reported(pipeline):
     pipeline.add_parameter(ColumnCalculation("f", "risk", "f", lambda df, *_: df["a"]))
     pipeline.add_parameter(CustomLayer("c", func=lambda data, *_: data))
@@ -160,7 +169,7 @@ def test_bundle_holds_the_plan_and_a_checksummed_model(kitchen_sink, tmp_path):
 
 def test_missing_onnx_artifact_is_a_blocker(kitchen_sink):
     result = export_plan(kitchen_sink, artifacts={})
-    assert [b.layer for b in result.blockers] == ["model_score"]
+    assert [b.layer for b in result.blockers] == ["model_score", "model_score_derived"]
 
 
 # -- parity ------------------------------------------------------------------

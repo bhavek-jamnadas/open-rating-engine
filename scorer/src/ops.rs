@@ -60,8 +60,17 @@ fn run_step(step: &Step, models: &Models, data: &mut Data) -> Result<(), String>
             let result = rating_tables(table(data, t)?, data, tables, formula.as_ref())?;
             data.get_mut(t).unwrap().set(column, result)
         }
-        Step::Onnx { table: t, column, model, inputs, .. } => {
-            let result = models.score(model, table(data, t)?, inputs)?;
+        Step::Onnx { table: t, column, model, inputs, derived, .. } => {
+            let target = table(data, t)?;
+            let result = if derived.is_empty() {
+                models.score(model, target, inputs)?
+            } else {
+                // `inputs` maps working-frame names to source columns; every model input
+                // is then read from the working frame by name (OnnxScoring.derived).
+                let working = working_table(target, data, Some(inputs.as_slice()), derived)?;
+                let by_name: Vec<(String, String)> = working.columns.keys().map(|k| (k.clone(), k.clone())).collect();
+                models.score(model, &working, &by_name)?
+            };
             data.get_mut(t).unwrap().set(column, result)
         }
         Step::Glm { table: t, column, inputs, derived, eta, offset, link, .. } => {
@@ -190,15 +199,15 @@ fn rating_tables(target: &Table, data: &Data, tables: &[RatingTable], formula: O
     Ok(Column::F64(out))
 }
 
-fn glm(
+/// The working frame of a layer with formula columns: `inputs` (leaf, source) mapped
+/// from `target` (or `target` itself when there is no mapping), then each formula column
+/// evaluated in order — `GlmScoring._build_working_frame` / `OnnxScoring` in pandas.
+fn working_table(
     target: &Table,
     data: &Data,
     inputs: Option<&[(String, String)]>,
     derived: &[Derived],
-    eta: &Expr,
-    offset: Option<&str>,
-    link: Link,
-) -> Result<Column, String> {
+) -> Result<Table, String> {
     let mut working = match inputs {
         Some(map) => {
             let missing: Vec<String> = map
@@ -223,6 +232,19 @@ fn glm(
         let column = value.into_column(working.nrows);
         working.set(&d.name, column)?;
     }
+    Ok(working)
+}
+
+fn glm(
+    target: &Table,
+    data: &Data,
+    inputs: Option<&[(String, String)]>,
+    derived: &[Derived],
+    eta: &Expr,
+    offset: Option<&str>,
+    link: Link,
+) -> Result<Column, String> {
+    let working = working_table(target, data, inputs, derived)?;
     let ctx = Ctx { table: &working, data, rating: None };
     let mut linear = eval(eta, &ctx)?.into_column(working.nrows).to_f64()?;
     if let Some(offset) = offset {

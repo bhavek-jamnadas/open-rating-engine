@@ -1018,6 +1018,67 @@
    ]
   },
   {
+   "op": "onnx",
+   "layer": "model_score_derived",
+   "table": "risk",
+   "column": "model_score_derived",
+   "model": "tiny_model",
+   "inputs": [
+    [
+     "age_raw",
+     "age"
+    ],
+    [
+     "value",
+     "value"
+    ],
+    [
+     "usage",
+     "usage"
+    ],
+    [
+     "rid",
+     "risk_number"
+    ]
+   ],
+   "derived": [
+    {
+     "name": "age",
+     "expr": {
+      "k": "arith",
+      "op": "add",
+      "l": {
+       "k": "call",
+       "f": "minimum",
+       "args": [
+        {
+         "k": "col",
+         "name": "age_raw"
+        },
+        {
+         "k": "const",
+         "t": "int",
+         "v": 60
+        }
+       ]
+      },
+      "r": {
+       "k": "const",
+       "t": "int",
+       "v": 1
+      }
+     }
+    },
+    {
+     "name": "risk_id",
+     "expr": {
+      "k": "col",
+      "name": "rid"
+     }
+    }
+   ]
+  },
+  {
    "op": "glm",
    "layer": "glm_frequency",
    "table": "risk",

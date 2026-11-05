@@ -70,7 +70,7 @@ Layer types (`open_rating_engine.rating_engine.pricing_layers`), all extending `
 | `RatingTablesLayer` | Looks up rating factors from several tables and multiplies them together |
 | `GlmScoring` | Scores a GLM or other additive model in closed form, with no JVM |
 | `H2OScoringParameter` | Scores an H2O MOJO model (regression / binomial / multinomial) |
-| `OnnxScoring` | Scores an ONNX model |
+| `OnnxScoring` | Scores an ONNX model, optionally from formula columns (`derived`) computed from the raw data |
 | `CustomLayer` | Runs any callable that doesn't fit a typed layer |
 
 `open_rating_engine.rating_engine.binning` holds the thermometer (cumulative) encoding. Training

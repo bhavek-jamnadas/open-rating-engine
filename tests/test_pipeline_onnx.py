@@ -134,3 +134,101 @@ def test_onnx_layer_inside_pipeline(patch_onnx, pipeline, sample_data, mock_cont
     out = pipeline.predict(sample_data)
     assert "prediction" in out["risk"].columns
     assert len(out["risk"]) == 4
+
+
+# -- derived (formula) columns -------------------------------------------------
+
+
+def _derived_layer(**kw):
+    return OnnxScoring(
+        name="score",
+        target_table="risk",
+        output_column="prediction",
+        # The model was trained on a CLIPPED age; the data holds the raw one.
+        column_map={"age_raw": "driver_youngest_age", "vehicle_market_value": "vehicle_market_value"},
+        derived=[{"name": "driver_youngest_age", "expression": "np.clip(age_raw, 25, 60)"}],
+        model_artifact_key="model_cost",
+        **kw,
+    )
+
+
+def test_derived_formula_feeds_a_model_input(patch_onnx, sample_data, mock_context):
+    out = _derived_layer().apply(sample_data, {}, {}, mock_context)["risk"]
+    expected = (
+        np.clip(out["driver_youngest_age"].to_numpy(), 25, 60).astype(np.float32)
+        + out["vehicle_market_value"].to_numpy().astype(np.float32)
+    )
+    assert np.allclose(out["prediction"].to_numpy(), expected)
+
+
+def test_the_formula_does_not_write_back_to_the_table(patch_onnx, sample_data, mock_context):
+    before = sample_data["risk"]["driver_youngest_age"].copy()
+    out = _derived_layer().apply(sample_data, {}, {}, mock_context)["risk"]
+    assert out["driver_youngest_age"].equals(before)
+    assert "age_raw" not in out.columns
+
+
+def test_a_formula_can_read_an_earlier_formula(patch_onnx, sample_data, mock_context):
+    layer = OnnxScoring(
+        name="score", target_table="risk", output_column="prediction",
+        column_map={"age_raw": "driver_youngest_age", "v": "vehicle_market_value"},
+        derived=[{"name": "driver_youngest_age", "expression": "age_raw * 2"},
+                 {"name": "vehicle_market_value", "expression": "v + driver_youngest_age"}],
+        model_artifact_key="model_cost",
+    )
+    out = layer.apply(sample_data, {}, {}, mock_context)["risk"]
+    age2 = out["driver_youngest_age"].to_numpy() * 2
+    expected = age2.astype(np.float32) + (out["vehicle_market_value"].to_numpy() + age2).astype(np.float32)
+    assert np.allclose(out["prediction"].to_numpy(), expected)
+
+
+def test_a_model_input_neither_mapped_nor_derived_is_named(patch_onnx, sample_data, mock_context):
+    layer = OnnxScoring(
+        name="score", target_table="risk", output_column="prediction",
+        column_map={"age_raw": "driver_youngest_age"},
+        derived=[{"name": "driver_youngest_age", "expression": "age_raw"}],
+        model_artifact_key="model_cost",
+    )
+    with pytest.raises(LayerCalculationError, match="vehicle_market_value"):
+        layer.apply(sample_data, {}, {}, mock_context)
+
+
+def test_a_failing_formula_names_itself(patch_onnx, sample_data, mock_context):
+    layer = OnnxScoring(
+        name="score", target_table="risk", output_column="prediction",
+        column_map={"age_raw": "driver_youngest_age", "vehicle_market_value": "vehicle_market_value"},
+        derived=[{"name": "driver_youngest_age", "expression": "nope * 2"}],
+        model_artifact_key="model_cost",
+    )
+    with pytest.raises(LayerCalculationError, match="formula column 'driver_youngest_age'"):
+        layer.apply(sample_data, {}, {}, mock_context)
+
+
+@pytest.mark.parametrize("derived", [[{"name": "x"}], [{"expression": "1"}], ["np.log(a)"]])
+def test_malformed_derived_entries_are_refused(derived):
+    with pytest.raises(ValueError, match="derived entry"):
+        OnnxScoring("s", "t", "o", column_map={"a": "a"}, model_artifact_key="m", derived=derived)
+
+
+def test_a_derived_name_cannot_also_be_mapped():
+    with pytest.raises(ValueError, match="also mapped"):
+        OnnxScoring("s", "t", "o", column_map={"a": "a", "b": "b"}, model_artifact_key="m",
+                    derived=[{"name": "b", "expression": "a * 2"}])
+
+
+def test_derived_round_trips_and_is_omitted_when_unused():
+    plain = _layer()
+    assert "derived" not in plain.parameters and "derived" not in plain._layer_params()
+    layer = _derived_layer()
+    back = OnnxScoring._from_dict(deepcopy(layer.parameters))
+    assert back.derived == layer.derived
+    assert back.column_map == layer.column_map
+    assert back._layer_params() == layer._layer_params()
+
+
+def test_a_layer_pickled_before_derived_existed_still_scores(patch_onnx, sample_data, mock_context):
+    """Pipelines are cloudpickled; one written by an older engine has no `derived`."""
+    layer = _layer()
+    del layer.__dict__["derived"]
+    out = layer.apply(sample_data, {}, {}, mock_context)
+    assert np.allclose(out["risk"]["prediction"].to_numpy(), _expected_sum(out["risk"]))
