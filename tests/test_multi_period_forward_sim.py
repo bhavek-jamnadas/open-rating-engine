@@ -167,11 +167,11 @@ def _src(table, column, expression):
     }
 
 
+# The only columns the multi-period optimizer reads: conversion and expected profit
+# (plus the optional survivorship weight). No premium / cost / previous-premium names.
 _MP_COLS = dict(
     conversion_col="conversion_rate",
     profit_col="expected_profit",
-    gwp_col="gwp",
-    cost_col="technical_cost",
     sample_weight_col="sample_weights",
 )
 
@@ -543,22 +543,26 @@ def test_demographic_aging_precompute_paid_once(monkeypatch):
     import open_rating_engine.optimization._horizon_engine as eng
 
     opt = _invariant_optimizer(n_periods=3)
-    calls = {"n": 0}
+    calls = {"static": 0, "feedback": 0}
     real = eng.apply_aging
 
     def counting(rules, frames):
-        calls["n"] += 1
+        calls["feedback" if "risk.previous_gwp" in rules else "static"] += 1
+        assert not ("risk.previous_gwp" in rules and "risk.driver_youngest_age" in rules)
         return real(rules, frames)
 
     monkeypatch.setattr(eng, "apply_aging", counting)
 
     base = opt.input.initial_flat
-    for k in range(4):  # four distinct candidate overlays -> four full simulations
+    n_evals = 4
+    for k in range(n_evals):  # four distinct candidate overlays -> four full simulations
         opt._objective_fn(base + 0.01 * (k + 1))
 
-    # Only the trajectory's demographic aging steps run (n_periods - 1), once —
-    # the previous_gwp feedback is threaded per period without apply_aging.
-    assert calls["n"] == opt.parameters.n_periods - 1
+    # The static (demographic) aging steps run once, for the cached trajectory...
+    assert calls["static"] == opt.parameters.n_periods - 1
+    # ...and only the cheap feedback rule (previous_gwp <- gwp) is re-applied per
+    # period per evaluation, against last period's scored book.
+    assert calls["feedback"] == n_evals * (opt.parameters.n_periods - 1)
 
 
 def test_overlay_injected_once_per_simulation():
@@ -1175,3 +1179,141 @@ def test_frontier_forwards_constraint_metric():
     assert (fr["constraint_metric"] == "total_volume").all()
     assert (fr["constraint_kind"] == "target").all()
     assert fr["result_success"].all()
+
+
+# --------------------------------------------------------------------------- #
+# Feedback aging rules — the price-change feedback comes from the aging rules
+# --------------------------------------------------------------------------- #
+#
+# Rules that read a column the pipeline writes (``previous_gwp <- df['gwp']``) are
+# "feedback" rules: re-applied each period to last period's scored book. Every
+# other rule is "static" and aged once into the cached demographic trajectory.
+
+from open_rating_engine.optimization._horizon_engine import (  # noqa: E402
+    _MultiPeriodHorizonEngine,
+    _expression_column_refs,
+)
+
+_AGE_RULE = {"risk.driver_youngest_age": _src("risk", "driver_youngest_age", "df['driver_youngest_age'] + 1")}
+_GWP_RULE = {"risk.previous_gwp": _src("risk", "previous_gwp", "df['gwp']")}
+
+
+def _runoff_optimizer(aging_rules_rn, n_periods=3, **kw):
+    """The ``_invariant_optimizer`` book (1 NB + 2 RN, runoff) with custom rules."""
+    pipe = _build_pipeline(_ALL_BANDS, derive_bands=True)
+    nb = {"risk": pd.DataFrame({
+        "driver_youngest_age": [24], "base_premium": [450.0],
+        "technical_cost": [280.0], "previous_gwp": [440.0],
+    })}
+    rn = {"risk": pd.DataFrame({
+        "driver_youngest_age": [34, 44], "base_premium": [520.0, 600.0],
+        "technical_cost": [310.0, 330.0], "previous_gwp": [500.0, 580.0],
+    })}
+    return PriceOptimizerRatingFactorMultiPeriod.from_pipeline(
+        pipeline=pipe, layer_name="demand_multiplier",
+        scored_data_nb=pipe.predict(nb), scored_data_rn=pipe.predict(rn),
+        data_nb=nb, data_rn=rn, n_periods=n_periods,
+        aging_rules_rn=aging_rules_rn, discount_rate=0.0, **_MP_COLS, **kw,
+    )
+
+
+def _with_rule_flag(rules, name, **flags):
+    out = deepcopy(rules)
+    out[name]["aging_rule"].update(flags)
+    return out
+
+
+def test_aging_rules_split_into_static_and_feedback():
+    opt = _invariant_optimizer(n_periods=2)
+    split = opt._aging_rule_split()
+    assert set(split.static) == {"risk.driver_youngest_age"}
+    assert set(split.feedback) == {"risk.previous_gwp"}
+    assert opt.parameters.feedback_aging_rules == ("risk.previous_gwp",)
+
+
+@pytest.mark.parametrize("expression", [
+    "df['gwp']", 'df["gwp"] * 1.0', "df.gwp", "df.get('gwp')", "df[['gwp']].sum(axis=1)",
+    "np.where(df['previous_gwp'] > 0, df['gwp'], 0.0)",
+])
+def test_feedback_detection_sees_every_column_access_style(expression):
+    assert "gwp" in _expression_column_refs(expression, "rule")
+
+
+def test_unparseable_aging_expression_fails_at_construction():
+    rules = {"risk.previous_gwp": _src("risk", "previous_gwp", "df['gwp'")}
+    with pytest.raises(ValueError, match="unparseable"):
+        _runoff_optimizer(rules)
+
+
+def test_forcing_a_static_rule_through_the_feedback_path_is_equivalent():
+    """Feedback rules are evaluated on last period's scored book; for a rule that
+    only reads inputs that gives exactly the static result, so the two paths agree."""
+    rules = {**_AGE_RULE, **_GWP_RULE}
+    forced = _with_rule_flag(rules, "risk.driver_youngest_age", feedback=True)
+    plain_opt, forced_opt = _runoff_optimizer(rules), _runoff_optimizer(forced)
+    assert set(forced_opt._aging_rule_split().feedback) == set(rules)
+
+    x = plain_opt.input.initial_flat * 1.03
+    plain, alt = plain_opt._simulate_horizon(x), forced_opt._simulate_horizon(x)
+    cols = ["driver_youngest_age", "previous_gwp", "gwp", "conversion_rate", "sample_weights", "expected_profit"]
+    pd.testing.assert_frame_equal(plain[cols], alt[cols], check_dtype=False)
+
+
+def test_feedback_override_must_be_a_bool():
+    rules = _with_rule_flag({**_AGE_RULE, **_GWP_RULE}, "risk.previous_gwp", feedback="yes")
+    with pytest.raises(TypeError, match="feedback"):
+        _runoff_optimizer(rules)
+
+
+def test_every_feedback_rule_is_threaded_not_just_previous_gwp():
+    # A second x-dependent rule: carry last period's price change forward.
+    rules = {
+        **_AGE_RULE, **_GWP_RULE,
+        "risk.previous_price_change": _src("risk", "previous_price_change", "df['price_change']"),
+    }
+    opt = _runoff_optimizer(rules, n_periods=3)
+    assert set(opt.parameters.feedback_aging_rules) == {"risk.previous_gwp", "risk.previous_price_change"}
+
+    df = opt._simulate_horizon(opt.input.initial_flat * 1.05)
+    for t in (1, 2):
+        prev = df[df["__period"] == t - 1].reset_index(drop=True)
+        cur = df[df["__period"] == t].reset_index(drop=True)
+        assert np.allclose(cur["previous_price_change"], prev["price_change"])
+        assert np.allclose(cur["previous_gwp"], prev["gwp"])
+
+
+def test_going_concern_feedback_lands_on_carried_rows_only():
+    opt = _going_concern_optimizer(n_periods=3)
+    df = opt._simulate_horizon(opt.input.initial_flat * 0.97)
+    for t in (1, 2):
+        prev = df[df["__period"] == t - 1].set_index("__policy_id")
+        cur = df[df["__period"] == t]
+        carried = cur[cur["__cohort"] == "rn"].set_index("__policy_id")
+        fresh = cur[cur["__cohort"] == "nb"]
+        # Each carried policy's previous_gwp is the premium it was charged last period...
+        assert np.allclose(carried["previous_gwp"], prev.loc[carried.index, "gwp"])
+        # ...while fresh new business keeps its seed value from data_nb.
+        assert (fresh["previous_gwp"] == 490.0).all()
+
+
+def test_feedback_rule_in_new_business_rules_is_rejected():
+    with pytest.raises(ValueError, match="aging_rules_nb"):
+        _runoff_optimizer({**_AGE_RULE, **_GWP_RULE}, aging_rules_nb=_GWP_RULE)
+
+
+def test_thread_feedback_aligns_non_target_tables_and_guards_row_count():
+    # Going-concern layout on a non-target table: [fresh NB rows..., carried rows...].
+    rules = {"policy.prev_total": _src("policy", "prev_total", "df['total']")}
+    prev_demo = {"policy": pd.DataFrame({"prev_total": [0.0, 0.0]})}
+    prev_scored = {"policy": pd.DataFrame({"prev_total": [0.0, 0.0], "total": [10.0, 20.0]})}
+    book = {"policy": pd.DataFrame({"prev_total": [5.0, 0.0, 0.0]})}  # 1 fresh NB + 2 carried
+
+    _MultiPeriodHorizonEngine._thread_feedback(book, prev_scored, prev_demo, rules)
+    assert book["policy"]["prev_total"].tolist() == [5.0, 10.0, 20.0]
+
+    # A pipeline that changes a table's row count can't be aligned: fail loudly.
+    bad_scored = {"policy": pd.DataFrame({"prev_total": [0.0], "total": [10.0]})}
+    with pytest.raises(RuntimeError, match="row count"):
+        _MultiPeriodHorizonEngine._thread_feedback(
+            {"policy": pd.DataFrame({"prev_total": [5.0, 0.0, 0.0]})}, bad_scored, prev_demo, rules,
+        )

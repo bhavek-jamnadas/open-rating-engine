@@ -7,11 +7,15 @@ rather than each carrying its own copy (design
 ``docs/design/multi_period_individual_optimizer.md`` §13–§14). The engine owns:
 
 - two-basket aging (``_age_one_step`` / ``_fresh_nb`` / ``_age_book_trajectory``)
-  via forge's shared :func:`apply_aging`, and the cached x-independent demographic
-  trajectory (``_demographic_trajectory``);
+  via forge's shared :func:`apply_aging`, the split of the aging rules into
+  **static** rules (read only input data) and **feedback** rules (read a column
+  the pipeline writes, e.g. ``previous_gwp ← gwp``) (``_aging_rule_split``), and
+  the cached x-independent demographic trajectory built from the static rules
+  (``_demographic_trajectory``);
 - demand-overlay injection (``_apply_overlay``) and the forward simulation with
-  survivorship by weight-carrying and the ``previous_gwp ← gwp`` feedback
-  (``_simulate_horizon``), reduced to NPV / volume / lifetime conversion
+  survivorship by weight-carrying and the feedback rules re-applied each period
+  to the previous period's scored book (``_simulate_horizon`` /
+  ``_thread_feedback``), reduced to NPV / volume / lifetime conversion
   (``_simulate_and_aggregate``);
 - post-hoc Monte-Carlo survivorship risk (``_build_mc_inputs`` /
   ``_simulate_mc_npv`` / ``monte_carlo_npv``).
@@ -26,13 +30,14 @@ can reuse the inherited decision-space helpers (``_unflatten`` / ``_flatten`` /
 ``self.input`` / ``self.parameters`` / ``self.output`` (the basket data, horizon
 config, and column names the methods below read) and add their own solve on top.
 """
+import ast
 from copy import deepcopy
 from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
 
-from ..data_processing.data_aging import apply_aging
+from ..data_processing.data_aging import SOURCE_COLUMN_LAYER_TYPE, apply_aging
 from ._decision_space import _RatingFactorDecisionSpace
 
 
@@ -45,6 +50,75 @@ _POLICY_ID_COL = "__policy_id"  # stable per-policy id (assigned at birth) for M
 # its future renewals only (no new NB after period 0); "going_concern" injects a
 # fresh un-aged NB cohort every period.
 _NEW_BUSINESS_MODES = ("runoff", "going_concern")
+
+# Optional key on a rule's ``aging_rule`` dict that overrides the automatic
+# static / feedback classification (see ``_aging_rule_split``): ``True`` forces a
+# rule to be re-applied to last period's scored book, ``False`` forces it into the
+# cached demographic trajectory. Needed only when a rule reads a column produced
+# by a layer that does not declare its outputs (e.g. a ``CustomLayer``).
+_FEEDBACK_KEY = "feedback"
+
+
+def _active_aging_rule(cfg):
+    """The ``aging_rule`` dict of a config that :func:`apply_aging` would actually
+    evaluate, or ``None`` for one it silently skips (wrong type, no rule, disabled,
+    empty expression, missing table/column). Mirrors ``apply_aging``'s own skip
+    conditions so classification never disagrees with execution."""
+    if not isinstance(cfg, dict) or cfg.get("type") != SOURCE_COLUMN_LAYER_TYPE:
+        return None
+    rule = cfg.get("aging_rule")
+    if not isinstance(rule, dict) or not rule.get("enabled", True):
+        return None
+    expression = rule.get("expression")
+    if not isinstance(expression, str) or not expression:
+        return None
+    for key in ("source_table", "source_column"):
+        if not isinstance(cfg.get(key), str) or not cfg.get(key):
+            return None
+    return rule
+
+
+def _expression_column_refs(expression, rule_name):
+    """Every name an aging expression could read a column by: each string literal
+    (``df['gwp']``, ``df.get('gwp')``, ``df[['a', 'b']]``) plus each ``df.<attr>``.
+
+    Deliberately an over-approximation — a stray literal such as ``"RN"`` is
+    harmless because the caller only intersects these names with the columns the
+    pipeline writes, and wrongly classing a rule as feedback costs a little speed,
+    never correctness.
+    """
+    try:
+        tree = ast.parse(expression, mode="eval")
+    except SyntaxError as exc:
+        raise ValueError(f"aging rule '{rule_name}' has an unparseable expression {expression!r}: {exc}") from exc
+    refs = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            refs.add(node.value)
+        elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "df":
+            refs.add(node.attr)
+    return refs
+
+
+def _pipeline_output_columns(pipeline):
+    """``{table: {column, ...}}`` of every column a pipeline layer declares it
+    writes: ``ColumnCalculation``-family layers (``target_table`` /
+    ``output_column``) and ``RenameColumns`` (the new names). ``SourceColumn``
+    declares inputs, not outputs, and has neither attribute. Layers that write
+    undeclared columns (``CustomLayer``) are not visible here — use the
+    ``aging_rule["feedback"]`` override for rules that read those."""
+    outputs = {}
+    for layer in pipeline.layers.values():
+        table = getattr(layer, "target_table", None)
+        if not isinstance(table, str):
+            continue
+        column = getattr(layer, "output_column", None)
+        if isinstance(column, str):
+            outputs.setdefault(table, set()).add(column)
+        renamed = getattr(layer, "columns", None)
+        if isinstance(renamed, dict):
+            outputs.setdefault(table, set()).update(c for c in renamed.values() if isinstance(c, str))
+    return outputs
 
 
 def _npv_distribution_summary(samples, percentiles, var_alpha):
@@ -83,7 +157,7 @@ class _MultiPeriodHorizonEngine(_RatingFactorDecisionSpace):
 
     Every method here reads only instance state the subclass sets up
     (``self.input`` baskets, ``self.parameters`` horizon config + column names,
-    ``self.pipeline``, ``self._layer_meta``, ``self._demographic_aging_rules``,
+    ``self.pipeline``, ``self._layer_meta``, ``self._aging_split_cache``,
     ``self._demo_trajectory_cache``, ``self.output``) plus inherited
     decision-space helpers — so the engine is behaviour-identical wherever it is
     mixed in.
@@ -104,17 +178,20 @@ class _MultiPeriodHorizonEngine(_RatingFactorDecisionSpace):
         sample_weight_col="sample_weights",
         conversion_col="conversion_rate",
         profit_col="reporting_expected_profit",
-        gwp_col="gwp",
-        cost_col="reporting_offered_technical_premium",
-        previous_gwp_col="previous_gwp",
         id_columns=None,
     ):
         """Validate the baskets, aging rules, and horizon configuration shared by
         every multi-period optimizer and set up the engine state the simulation
         methods read: ``self.input`` (baskets; ``from_pipeline`` adds the
         decision-space attributes), ``self.parameters`` (horizon config + column
-        names), ``self.output``, and the cached x-independent demographic
-        trajectory (``_demographic_aging_rules`` / ``_demo_trajectory_cache``).
+        names), ``self.output``, and the lazily-built aging-rule split and cached
+        x-independent demographic trajectory (``_aging_split_cache`` /
+        ``_demo_trajectory_cache``).
+
+        The price-change feedback needs no column name: any aging rule that reads
+        a column the pipeline writes (``previous_gwp ← gwp`` included) is detected
+        and re-applied each period to the previous period's scored book (see
+        :meth:`_aging_rule_split`).
 
         Subclasses call ``super().__init__(...)`` and add their solver-specific
         state on top (e.g. the rating-factor optimizer appends the objective and
@@ -162,9 +239,6 @@ class _MultiPeriodHorizonEngine(_RatingFactorDecisionSpace):
             sample_weight_col=sample_weight_col,
             conversion_col=conversion_col,
             profit_col=profit_col,
-            gwp_col=gwp_col,
-            cost_col=cost_col,
-            previous_gwp_col=previous_gwp_col,
             id_columns=id_columns,
         )
         self.output = SimpleNamespace(
@@ -176,15 +250,14 @@ class _MultiPeriodHorizonEngine(_RatingFactorDecisionSpace):
             })
         )
 
-        # Performance split (design §13.1): the demographic aging trajectory is
-        # x-independent and can be precomputed once; only the ``previous_gwp ← gwp``
-        # feedback depends on x, so it is excluded here and threaded per
-        # evaluation in ``_simulate_horizon``. ``_demo_trajectory_cache`` memoises
-        # the trajectory the first time it is built.
-        self._demographic_aging_rules = {
-            name: cfg for name, cfg in aging_rules_rn.items()
-            if cfg.get("source_column") != previous_gwp_col
-        }
+        # Performance split (design §13.1): rules that read only input data give an
+        # x-independent demographic trajectory, precomputed once; rules that read a
+        # pipeline output depend on x and are re-applied per evaluation in
+        # ``_simulate_horizon``. Classifying a rule needs the pipeline's declared
+        # outputs, which only exist once ``from_pipeline`` has stored the pipeline,
+        # so the split (``_aging_rule_split``) and the trajectory are built lazily
+        # and memoised here.
+        self._aging_split_cache = None
         self._demo_trajectory_cache = None
 
     # --------------------------------------------------------------------- #
@@ -350,7 +423,7 @@ class _MultiPeriodHorizonEngine(_RatingFactorDecisionSpace):
         cohort. In ``"runoff"`` mode no new business is written after period 0.
 
         ``aging_rules`` defaults to the full carried-book rules; the performance
-        path passes the demographic-only subset so the trajectory is
+        path passes the static subset (no feedback rules) so the trajectory is
         x-independent (design §13.1). ``cohort_target``, if given, tags that
         table's rows ``__cohort = "nb" | "rn"`` (so the forward sim threads the
         feedback / survivorship onto renewals only) and a stable ``__policy_id``
@@ -393,18 +466,80 @@ class _MultiPeriodHorizonEngine(_RatingFactorDecisionSpace):
                 baskets.append(aged_carry)
         return baskets
 
+    def _aging_rule_split(self):
+        """Split the renewal aging rules into **static** and **feedback** rules.
+
+        A rule is *feedback* when its expression reads a column the pipeline
+        writes on the rule's table — e.g. ``previous_gwp ← df['gwp']``. Its value
+        next period depends on what the overlay ``x`` charged this period, so it
+        cannot be precomputed: ``_simulate_horizon`` re-applies it each period to
+        the previous period's **scored** book. Every other rule is *static* (reads
+        only input data: ages, tenure, dates) and is aged once into the cached
+        demographic trajectory.
+
+        ``aging_rule["feedback"] = True | False`` overrides the detection (for
+        columns written by layers that do not declare their outputs). Rules
+        ``apply_aging`` would skip are classed static, where they no-op too.
+
+        New-business rules may not be feedback: each period's fresh cohort is
+        re-drawn from ``data_nb``, so there is no previous scored book for it to
+        read from.
+
+        Returns ``SimpleNamespace(static=dict, feedback=dict)``, memoised. The
+        feedback rule names are also recorded on
+        ``self.parameters.feedback_aging_rules`` for inspection.
+        """
+        if self._aging_split_cache is not None:
+            return self._aging_split_cache
+        if not hasattr(self, "pipeline"):
+            raise RuntimeError("_aging_rule_split requires an optimizer built via from_pipeline().")
+        outputs = _pipeline_output_columns(self.pipeline)
+
+        def _is_feedback(name, cfg):
+            rule = _active_aging_rule(cfg)
+            if rule is None:
+                return False
+            override = rule.get(_FEEDBACK_KEY)
+            if override is not None:
+                if not isinstance(override, bool):
+                    raise TypeError(
+                        f"aging rule '{name}': aging_rule['{_FEEDBACK_KEY}'] must be True, False, "
+                        f"or absent; got {override!r}."
+                    )
+                return override
+            refs = _expression_column_refs(rule["expression"], name)
+            return bool(refs & outputs.get(cfg["source_table"], set()))
+
+        static, feedback = {}, {}
+        for name, cfg in self.parameters.aging_rules_rn.items():
+            (feedback if _is_feedback(name, cfg) else static)[name] = cfg
+
+        nb_feedback = [name for name, cfg in self.parameters.aging_rules_nb.items() if _is_feedback(name, cfg)]
+        if nb_feedback:
+            raise ValueError(
+                f"aging_rules_nb {nb_feedback} read a pipeline output column. New business is re-drawn "
+                "from data_nb each period, so its aging cannot depend on last period's scored book; "
+                "keep those rules in aging_rules_rn (or set aging_rule['feedback'] = False if the "
+                "column is genuinely an input)."
+            )
+
+        self._aging_split_cache = SimpleNamespace(static=static, feedback=feedback)
+        self.parameters.feedback_aging_rules = tuple(feedback)
+        return self._aging_split_cache
+
     def _demographic_trajectory(self):
         """Cached, x-independent demographic book trajectory (design §13.1).
 
-        Built once with the **demographic-only** aging rules (the
-        ``previous_gwp ← gwp`` feedback excluded) and tagged with ``__cohort`` so
-        renewals are identifiable. The per-evaluation forward sim threads the
-        x-dependent ``previous_gwp`` and survivorship weights onto this fixed
-        backbone, so aging is paid once rather than on every objective call.
+        Built once with the **static** aging rules (feedback rules such as
+        ``previous_gwp ← gwp`` excluded — see :meth:`_aging_rule_split`) and
+        tagged with ``__cohort`` so renewals are identifiable. The per-evaluation
+        forward sim threads the x-dependent feedback columns and survivorship
+        weights onto this fixed backbone, so aging is paid once rather than on
+        every objective call.
         """
         if self._demo_trajectory_cache is None:
             self._demo_trajectory_cache = self._age_book_trajectory(
-                aging_rules=self._demographic_aging_rules,
+                aging_rules=self._aging_rule_split().static,
                 cohort_target=self._layer_meta["target_table"],
             )
         return self._demo_trajectory_cache
@@ -444,11 +579,11 @@ class _MultiPeriodHorizonEngine(_RatingFactorDecisionSpace):
         trajectory is precomputed once (:meth:`_demographic_trajectory`) and the
         single shared overlay ``μ(x)`` is injected into **one** deep-copied
         pipeline and reused for every period. Per period only the x-dependent tail
-        is threaded onto the cached book — carried renewals inherit
-        ``previous_gwp`` from the premium charged last period (the feedback
-        hand-off) and a survivorship weight scaled by conversion (design §10.1),
-        while fresh new business keeps its seed ``previous_gwp`` and weight 1 —
-        then the book is scored.
+        is threaded onto the cached book — carried renewals get the feedback
+        aging rules applied to last period's scored book (e.g. ``previous_gwp``
+        becomes the premium charged last period; :meth:`_thread_feedback`) and a
+        survivorship weight scaled by conversion (design §10.1), while fresh new
+        business keeps its seed values and weight 1 — then the book is scored.
         """
         if not hasattr(self, "pipeline"):
             raise RuntimeError("_simulate_horizon requires an optimizer built via from_pipeline().")
@@ -456,14 +591,13 @@ class _MultiPeriodHorizonEngine(_RatingFactorDecisionSpace):
         target = self._layer_meta["target_table"]
         w_col = self.parameters.sample_weight_col
         conv_col = self.parameters.conversion_col
-        gwp_col = self.parameters.gwp_col
-        pgwp_col = self.parameters.previous_gwp_col
 
         trajectory = self._demographic_trajectory()                  # x-independent, cached
+        feedback_rules = self._aging_rule_split().feedback
         overlaid = self._apply_overlay(x, deepcopy(self.pipeline))   # μ(x) injected once, reused
 
         scored_periods = []
-        prev_gwp = None       # last period's scored gwp (all rows, in carry order)
+        prev_scored = None    # last period's scored book (feedback rules read it)
         survivorship = None   # last period's conversion × weight (all rows)
         for t, demo in enumerate(trajectory):
             book = {tbl: df.copy() for tbl, df in demo.items()}
@@ -483,18 +617,56 @@ class _MultiPeriodHorizonEngine(_RatingFactorDecisionSpace):
                 # The carried renewals are the aged previous-period book, in the
                 # same row order, so the feedback / survivorship align positionally.
                 rn_mask = (tgt[_COHORT_COL] == "rn").to_numpy()
-                tgt.loc[rn_mask, pgwp_col] = prev_gwp
                 tgt.loc[rn_mask, w_col] = survivorship
+                if feedback_rules:
+                    self._thread_feedback(book, prev_scored, trajectory[t - 1], feedback_rules)
 
             scored = overlaid.predict(book)
             scored_target = scored[target].copy()
             scored_target[_PERIOD_COL] = t
             scored_periods.append(scored_target)
 
-            prev_gwp = scored[target][gwp_col].to_numpy()
+            prev_scored = scored
             survivorship = scored[target][conv_col].to_numpy() * scored[target][w_col].to_numpy()
 
         return pd.concat(scored_periods, ignore_index=True)
+
+    @staticmethod
+    def _thread_feedback(book, prev_scored, prev_demo, feedback_rules):
+        """Apply the feedback aging rules to last period's scored book and write
+        the results onto this period's carried rows of ``book`` (in place).
+
+        ``apply_aging`` evaluates each rule against a copy of ``prev_scored``, so
+        an expression like ``df['gwp']`` reads the premium the overlay charged
+        last period — the same rule the user declared, run at the point in the
+        simulation where its inputs exist. Feedback rules therefore see last
+        period's values of every column (not the statically-aged ones).
+
+        Alignment: every period's book is ``[fresh NB rows..., carried rows...]``
+        (going concern) or all carried rows (runoff), and the carried rows are the
+        previous period's book aged in order. So, per table, the carried block is
+        the last ``len(prev_demo[table])`` rows. That needs ``predict`` to keep each
+        table's rows one-to-one with its input, which is checked.
+        """
+        tables = {cfg["source_table"] for cfg in feedback_rules.values()}
+        aged = apply_aging(
+            feedback_rules,
+            {tbl: prev_scored[tbl].copy() for tbl in tables if tbl in prev_scored},
+        )
+        for name, cfg in feedback_rules.items():
+            tbl, col = cfg["source_table"], cfg["source_column"]
+            if tbl not in aged or tbl not in book:
+                continue  # apply_aging skips a rule whose table is absent; so do we
+            n_carry = len(prev_demo[tbl])
+            if len(aged[tbl]) != n_carry or len(book[tbl]) < n_carry:
+                raise RuntimeError(
+                    f"feedback aging rule '{name}': the pipeline changed the row count of table "
+                    f"'{tbl}' ({n_carry} rows in, {len(aged[tbl])} scored), so last period's scored "
+                    "rows cannot be aligned with this period's carried rows. Feedback rules need "
+                    "predict to keep each table's rows one-to-one with its input."
+                )
+            frame = book[tbl]
+            frame.loc[frame.index[len(frame) - n_carry:], col] = aged[tbl][col].to_numpy()
 
     def _simulate_and_aggregate(self, x):
         """Run :meth:`_simulate_horizon` and reduce it to NPV / volume /
@@ -561,10 +733,20 @@ class _MultiPeriodHorizonEngine(_RatingFactorDecisionSpace):
     def _build_mc_inputs(self, x):
         """From ONE deterministic ``_simulate_horizon(x)`` build the per-policy ×
         per-period matrices Monte-Carlo needs: conversion ``P[i,t]``, discounted
-        offered margin ``OFF_over_disc[i,t] = (gwp - cost) / (1+r)^(t+δ)``, and the
+        offered margin ``OFF_over_disc[i,t] = offered[i,t] / (1+r)^(t+δ)``, and the
         birth-weight vector ``weight0[i]``.
 
-        These are deterministic for fixed ``x`` (aging + ``previous_gwp`` feedback
+        The offered margin is the profit a policy earns *if it converts*. Monte-Carlo
+        needs it (not the expected profit) because it samples conversion itself. It is
+        recovered from the two columns the optimizer already reads, ``offered =
+        expected_profit / conversion`` (0 where conversion is 0: such a policy never
+        survives, so its margin never counts). That makes ``E[MC NPV]`` equal the
+        deterministic NPV by construction, whatever the pipeline's profit definition,
+        and needs no premium or cost column. It does treat all of a row's expected
+        profit as conditional on converting: a cost charged on every quote, converted
+        or not, would be spread over the converting share instead.
+
+        These are deterministic for fixed ``x`` (aging + the feedback rules
         are deterministic; conversion is per-policy with no cross-policy coupling),
         so MC re-samples Bernoulli survival on top of them without re-running
         ``predict`` per simulation.
@@ -572,7 +754,9 @@ class _MultiPeriodHorizonEngine(_RatingFactorDecisionSpace):
         df = self._simulate_horizon(x)
         w_col = self.parameters.sample_weight_col
         conv_col = self.parameters.conversion_col
-        offered = df[self.parameters.gwp_col].to_numpy(dtype=float) - df[self.parameters.cost_col].to_numpy(dtype=float)
+        conv = df[conv_col].to_numpy(dtype=float)
+        profit = df[self.parameters.profit_col].to_numpy(dtype=float)
+        offered = np.divide(profit, conv, out=np.zeros_like(profit), where=conv > 0)
         df = df.assign(__offered=offered)
 
         n_periods = self.parameters.n_periods
