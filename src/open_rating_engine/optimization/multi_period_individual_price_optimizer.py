@@ -17,7 +17,7 @@ instead of single-period ones.
 This class therefore:
 
 - inherits the shared :class:`_MultiPeriodHorizonEngine` for aging / survivorship
-  / ``previous_gwp`` feedback / NPV — *identical* to the rating-factor multi-period
+  / price-change feedback (the aging rules that read pipeline outputs) / NPV — *identical* to the rating-factor multi-period
   optimizer (design G3), no second copy to drift;
 - builds the lifetime arrays by ``K`` full-book horizon sims, holding the
   per-policy overlay constant at each grid multiplier ``k`` (the multi-period
@@ -50,6 +50,11 @@ _CONSTRAINT_METRICS = ("lifetime_average", "year1", "total_discounted")
 
 # Default grid resolution when ``optimize`` is given ``bounds`` but no explicit grid.
 _DEFAULT_GRID_SIZE = 21
+
+# Per-policy lifetime response arrays, in key / reporting order. ``lifetime_gwp`` is
+# present only when the optional ``gwp_col`` reporting column is set.
+_RESPONSE_KEYS = ("lifetime_npv", "lifetime_conversion", "lifetime_gwp", "lifetime_volume")
+_REPORTING_KEYS = ("lifetime_gwp", "lifetime_volume")
 
 
 def _per_exposure(total, birth_weights):
@@ -97,7 +102,20 @@ class PriceOptimizerIndividualMultiPeriod(_MultiPeriodHorizonEngine):
     argmax (design §6), and this makes the optimizer reduce *exactly* to
     :class:`PriceOptimizerIndividual` when ``n_periods == 1`` and ``discount_rate == 0``
     (the keystone reduction, design §15.1).
+
+    The solve reads only ``conversion_col`` and ``profit_col`` (plus the optional
+    ``sample_weight_col``). ``gwp_col`` is an optional, keyword-only **reporting**
+    column: when given, each policy's discounted expected lifetime premium is
+    reported as ``lifetime_gwp``; when ``None`` (the default) that column is left out.
     """
+
+    def __init__(self, *args, gwp_col=None, **kwargs):
+        """Forward everything to the shared horizon engine, then record the optional
+        ``gwp_col`` reporting column (see the class docstring)."""
+        if gwp_col is not None and (not isinstance(gwp_col, str) or not gwp_col):
+            raise TypeError("gwp_col must be a non-empty column name or None.")
+        super().__init__(*args, **kwargs)
+        self.parameters.gwp_col = gwp_col
 
     # ------------------------------------------------------------------ #
     # Construction from a pipeline
@@ -223,29 +241,27 @@ class PriceOptimizerIndividualMultiPeriod(_MultiPeriodHorizonEngine):
                     "going_concern an NB quote must not share an in-force policy id."
                 )
 
-        # The objective / feedback columns the optimizer reads must exist in the scored
-        # data under the names given. This is an easy slip with namespaced pipelines, where
-        # the default bare names (e.g. "previous_gwp") do not match the scored columns (e.g.
-        # "risk.previous_gwp") — and a wrong previous_gwp_col silently breaks the price-change
-        # feedback (the rule is no longer excluded from the demographic trajectory and the
-        # feedback is written to a column the demand model never reads). Fail loudly here.
-        # sample_weight_col is intentionally not required (the engine defaults a missing weight
-        # to 1.0 in _simulate_horizon).
+        # The columns the optimizer reads must exist in the scored data under the names
+        # given. This is an easy slip with namespaced pipelines, where the default bare
+        # names (e.g. "conversion_rate") do not match the scored columns (e.g.
+        # "risk.conversion_rate"). Fail loudly here. sample_weight_col is intentionally not
+        # required (the engine defaults a missing weight to 1.0 in _simulate_horizon); the
+        # price-change feedback needs no column name (it comes from the aging rules); and
+        # gwp_col is checked only when the optional lifetime_gwp reporting is asked for.
         scored_cols = set(scored_data_rn[target].columns)
         required = {
-            "gwp_col": obj.parameters.gwp_col,
-            "previous_gwp_col": obj.parameters.previous_gwp_col,
             "conversion_col": obj.parameters.conversion_col,
             "profit_col": obj.parameters.profit_col,
-            "cost_col": obj.parameters.cost_col,
         }
+        if obj.parameters.gwp_col is not None:
+            required["gwp_col"] = obj.parameters.gwp_col
         missing = {param: col for param, col in required.items() if col not in scored_cols}
         if missing:
             raise ValueError(
                 f"these *_col(s) are not columns of the scored data['{target}']: {missing}. "
                 f"The names must match the pipeline's scored columns "
                 f"(available: {sorted(scored_cols)}). For a namespaced pipeline pass e.g. "
-                f"previous_gwp_col='{target}.previous_gwp'."
+                f"conversion_col='{target}.conversion_rate'."
             )
 
         obj.pipeline = pipeline
@@ -253,6 +269,9 @@ class PriceOptimizerIndividualMultiPeriod(_MultiPeriodHorizonEngine):
         obj._layer_meta = parsed["layer_meta"]
         obj._policy_factor = factor_names[0]
         obj._policy_key_col = key_cols[0]
+        # Classify the aging rules (static vs feedback) now, so a malformed rule or
+        # a feedback rule in aging_rules_nb fails at construction, not mid-solve.
+        obj._aging_rule_split()
         return obj
 
     # ------------------------------------------------------------------ #
@@ -303,16 +322,18 @@ class PriceOptimizerIndividualMultiPeriod(_MultiPeriodHorizonEngine):
 
         For each constant grid multiplier ``k`` the per-policy overlay is held at
         ``k`` for every renewal and the horizon is forward-simulated via the
-        inherited engine (aging / survivorship / ``previous_gwp`` feedback / NPV).
+        inherited engine (aging / survivorship / feedback aging rules / NPV).
         Per policy we harvest:
 
         - ``lifetime_npv`` — **per unit of birth exposure**:
-          ``(Σ_t w_{i,t}·p_{i,t}·(G_{i,t}-C_{i,t})/(1+r)^(t+δ)) / w_{i,0}``. Dividing
+          ``(Σ_t w_{i,t}·π_{i,t}/(1+r)^(t+δ)) / w_{i,0}`` with ``π`` the scored
+          expected profit (``profit_col``). Dividing
           by the birth weight is what makes the Lagrangian per-row argmax exact
           (design §6) and reduces it to the single-period ``expected_profit`` at
           ``n_periods == 1, r == 0``;
         - ``lifetime_conversion`` — the chosen horizon conversion summary (§9.1);
-        - reporting ``lifetime_gwp`` / ``lifetime_volume`` (also per-exposure);
+        - reporting ``lifetime_volume`` and, only when ``gwp_col`` is set,
+          ``lifetime_gwp`` (both per-exposure);
         - ``birth_weights`` ``w_{i,0}`` and the per-policy key (``risk_number``) for
           the constraint averaging and deployment.
 
@@ -382,12 +403,13 @@ class PriceOptimizerIndividualMultiPeriod(_MultiPeriodHorizonEngine):
 
             frame = pd.DataFrame({
                 _POLICY_ID_COL: ids,
-                "npv": df["expected_npv"].to_numpy(dtype=float),   # w·p·(G-C)/disc
+                "npv": df["expected_npv"].to_numpy(dtype=float),   # w·profit/disc
                 "wp": w * p,                                       # expected renewals (undiscounted)
                 "w": w,
                 "wp_disc": w * p / disc,                           # discounted expected renewals
-                "egwp": w * p * df[gwp_col].to_numpy(dtype=float) / disc,  # discounted expected premium
             })
+            if gwp_col is not None:                                # optional reporting only
+                frame["egwp"] = w * p * df[gwp_col].to_numpy(dtype=float) / disc  # discounted expected premium
             grouped = frame.groupby(_POLICY_ID_COL, sort=True)
             sums = grouped.sum()
 
@@ -406,11 +428,11 @@ class PriceOptimizerIndividualMultiPeriod(_MultiPeriodHorizonEngine):
             sum_wp = sums["wp"].to_numpy(dtype=float)
             sum_w = sums["w"].to_numpy(dtype=float)
             sum_wp_disc = sums["wp_disc"].to_numpy(dtype=float)
-            sum_egwp = sums["egwp"].to_numpy(dtype=float)
 
             npv_cols.append(_per_exposure(total_npv, birth_weights))
-            gwp_cols.append(_per_exposure(sum_egwp, birth_weights))
             vol_cols.append(_per_exposure(sum_wp, birth_weights))
+            if gwp_col is not None:
+                gwp_cols.append(_per_exposure(sums["egwp"].to_numpy(dtype=float), birth_weights))
 
             if constraint_metric == "lifetime_average":
                 conv_cols.append(np.where(sum_w > 0, sum_wp / sum_w, 0.0))
@@ -423,15 +445,17 @@ class PriceOptimizerIndividualMultiPeriod(_MultiPeriodHorizonEngine):
                 )
                 conv_cols.append(y1)
 
-        return {
+        arrays = {
             "lifetime_npv": np.column_stack(npv_cols),
             "lifetime_conversion": np.column_stack(conv_cols),
-            "lifetime_gwp": np.column_stack(gwp_cols),
             "lifetime_volume": np.column_stack(vol_cols),
             "birth_weights": birth_weights,
             "risk_keys": risk_keys,
             "policy_index": np.asarray(policy_index),
         }
+        if gwp_col is not None:
+            arrays["lifetime_gwp"] = np.column_stack(gwp_cols)
+        return arrays
 
     # ------------------------------------------------------------------ #
     # Public surface, mirroring the other optimizers
@@ -487,7 +511,7 @@ class PriceOptimizerIndividualMultiPeriod(_MultiPeriodHorizonEngine):
     def _cohort(arrays, decimals=9):
         """Bucket policies sharing an identical lifetime response (design §12).
 
-        Policies whose ``(lifetime_npv, lifetime_conversion, lifetime_gwp,
+        Policies whose ``(lifetime_npv, lifetime_conversion, [lifetime_gwp,]
         lifetime_volume)`` rows agree (to ``decimals`` places; ``None`` for
         bit-identical) respond identically to every grid multiplier, so they pick the
         same optimum and collapse into one weighted cell. Because the objective and
@@ -501,23 +525,21 @@ class PriceOptimizerIndividualMultiPeriod(_MultiPeriodHorizonEngine):
         inverse)`` mapping each policy to its cohort so the optimum expands back per
         policy; each cohort keeps its first member's exact (un-rounded) response.
         """
-        npv, conv = arrays["lifetime_npv"], arrays["lifetime_conversion"]
-        gwp, vol = arrays["lifetime_gwp"], arrays["lifetime_volume"]
-        k = npv.shape[1]
-        key = np.concatenate([npv, conv, gwp, vol], axis=1)
+        # lifetime_gwp is present only when gwp_col is set. It is reporting-only, so
+        # leaving it out of the key keeps the cohorted optimum exact (the per-row argmax
+        # depends on npv and conversion alone); it is in the key when present so the
+        # reported lifetime_gwp aggregates stay exact too.
+        names = [n for n in _RESPONSE_KEYS if n in arrays]
+        k = arrays["lifetime_npv"].shape[1]
+        key = np.concatenate([arrays[n] for n in names], axis=1)
         grouped = key if decimals is None else np.round(key, decimals)
         _, idx, inverse = np.unique(grouped, axis=0, return_index=True, return_inverse=True)
         inverse = np.asarray(inverse).reshape(-1)
         rep = key[idx]  # representative (first-member) exact response per cohort
         cohort_w = np.zeros(idx.shape[0], dtype=float)
         np.add.at(cohort_w, inverse, arrays["birth_weights"])
-        cohorted = {
-            "lifetime_npv": rep[:, :k],
-            "lifetime_conversion": rep[:, k:2 * k],
-            "lifetime_gwp": rep[:, 2 * k:3 * k],
-            "lifetime_volume": rep[:, 3 * k:4 * k],
-            "birth_weights": cohort_w,
-        }
+        cohorted = {n: rep[:, i * k:(i + 1) * k] for i, n in enumerate(names)}
+        cohorted["birth_weights"] = cohort_w
         return cohorted, inverse
 
     def _make_inner(self, grid, constraint_metric, enbp_ceiling, regularizer, cohort=False, cohort_decimals=9, n_jobs=1):
@@ -538,10 +560,7 @@ class PriceOptimizerIndividualMultiPeriod(_MultiPeriodHorizonEngine):
             objective_array=objective,
             constraint_array=work["lifetime_conversion"],
             sample_weights=work["birth_weights"],
-            reporting_arrays={
-                "lifetime_gwp": work["lifetime_gwp"],
-                "lifetime_volume": work["lifetime_volume"],
-            },
+            reporting_arrays={n: work[n] for n in _REPORTING_KEYS if n in work},
         )
         return inner, arrays, inverse
 
@@ -586,7 +605,7 @@ class PriceOptimizerIndividualMultiPeriod(_MultiPeriodHorizonEngine):
 
         conv = arrays["lifetime_conversion"][:, 0]
         npv_pe = arrays["lifetime_npv"][:, 0]
-        gwp_pe = arrays["lifetime_gwp"][:, 0]
+        gwp_pe = arrays["lifetime_gwp"][:, 0] if "lifetime_gwp" in arrays else None
         vol_pe = arrays["lifetime_volume"][:, 0]
 
         # Birth-weighted portfolio aggregates — the exact quantities the inner
@@ -594,7 +613,6 @@ class PriceOptimizerIndividualMultiPeriod(_MultiPeriodHorizonEngine):
         # reproducible optimize() target and the summaries are directly comparable.
         conversion = float(np.average(conv, weights=w))
         objective = float(np.average(npv_pe, weights=w))   # per-exposure NPV (matches inner)
-        gwp_avg = float(np.average(gwp_pe, weights=w))
         vol_avg = float(np.average(vol_pe, weights=w))
         total_npv = float(np.sum(w * npv_pe))              # Σ_i NPV_i (interpretable headline)
         total_volume = float(np.sum(w * vol_pe))
@@ -607,7 +625,7 @@ class PriceOptimizerIndividualMultiPeriod(_MultiPeriodHorizonEngine):
             "constraint": [conversion],
             "objective": [objective],
             "price_multiplier": [float(multiplier)],
-            "lifetime_gwp": [gwp_avg],
+            **({"lifetime_gwp": [float(np.average(gwp_pe, weights=w))]} if gwp_pe is not None else {}),
             "lifetime_volume": [vol_avg],
             "npv": [total_npv],
             "total_volume": [total_volume],
@@ -619,7 +637,7 @@ class PriceOptimizerIndividualMultiPeriod(_MultiPeriodHorizonEngine):
             "value": float(multiplier),
             "lifetime_conversion": conv,
             "lifetime_npv": npv_pe,
-            "lifetime_gwp": gwp_pe,
+            **({"lifetime_gwp": gwp_pe} if gwp_pe is not None else {}),
             "lifetime_volume": vol_pe,
             "birth_weight": w,
         })

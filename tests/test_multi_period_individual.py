@@ -42,11 +42,12 @@ from open_rating_engine.optimization.simulate_adjustment_grid import (
 # A small no-H2O pipeline with a per-policy (risk_number) demand overlay
 # --------------------------------------------------------------------------- #
 
+# gwp_col is optional reporting (lifetime_gwp); it is set here so the reporting path
+# stays covered. test_gwp_col_is_optional_reporting runs without it.
 _MP_COLS = dict(
     conversion_col="conversion_rate",
     profit_col="expected_profit",
     gwp_col="gwp",
-    cost_col="technical_cost",
     sample_weight_col="sample_weights",
 )
 
@@ -281,19 +282,18 @@ def test_from_pipeline_rejects_multi_factor_overlay():
 
 
 def test_from_pipeline_rejects_a_col_absent_from_the_scored_data():
-    # The bare test pipeline has no "risk.previous_gwp" column; passing it (as a user would
-    # by mistake for a namespaced pipeline) must fail loudly at construction with an
-    # actionable message naming the offending *_col — not silently break the feedback.
+    # The bare test pipeline has no "risk.gwp" column; passing it (as a user would by
+    # mistake for a namespaced pipeline) must fail loudly at construction with an
+    # actionable message naming the offending *_col.
     nb, rn = _books()
     pipe = _build_individual_pipeline(_all_risk_numbers(nb, rn))
-    with pytest.raises(ValueError, match="previous_gwp_col"):
+    with pytest.raises(ValueError, match="gwp_col"):
         PriceOptimizerIndividualMultiPeriod.from_pipeline(
             pipeline=pipe, layer_name="demand_multiplier",
             scored_data_nb=pipe.predict(nb), scored_data_rn=pipe.predict(rn),
             data_nb=nb, data_rn=rn, n_periods=2,
             aging_rules_rn=_FEEDBACK_RULE,
-            previous_gwp_col="risk.previous_gwp",  # absent from the bare scored data
-            **_MP_COLS,
+            **{**_MP_COLS, "gwp_col": "risk.gwp"},  # absent from the bare scored data
         )
 
 
@@ -913,3 +913,59 @@ def test_optimize_output_dataframe_is_the_horizon_frame_not_the_selection_table(
     assert len(df) == 5 * 3
     # Same object stored on self.output (mirrors RF's output_optimized).
     assert opt.output.output_optimized is df
+
+
+# --------------------------------------------------------------------------- #
+# Minimal inputs: gwp_col is optional reporting only
+# --------------------------------------------------------------------------- #
+
+def test_gwp_col_is_optional_reporting():
+    """Without gwp_col the optimizer needs only conversion + profit, drops the
+    lifetime_gwp reporting, and picks exactly the same per-policy optimum."""
+    nb, rn = _books()
+    combined = {"risk": pd.concat([nb["risk"], rn["risk"]], ignore_index=True)}
+    grid = np.linspace(0.9, 1.1, 11)
+    target = None
+    results = {}
+    for label, cols in (("with_gwp", _MP_COLS), ("minimal", {k: v for k, v in _MP_COLS.items() if k != "gwp_col"})):
+        pipe = _build_individual_pipeline(_all_risk_numbers(nb, rn))
+        target = target if target is not None else _baseline_conversion(pipe, combined)
+        opt = PriceOptimizerIndividualMultiPeriod.from_pipeline(
+            pipeline=pipe, layer_name="demand_multiplier",
+            scored_data_nb=pipe.predict(nb), scored_data_rn=pipe.predict(rn),
+            data_nb=nb, data_rn=rn, n_periods=3, aging_rules_rn=_FEEDBACK_RULE,
+            discount_rate=0.05, **cols,
+        )
+        res = opt.optimize(target_constraint=target, grid=grid, enbp_ceiling=None, tol=0.02, cohort=True)
+        results[label] = (opt, res, opt.baseline())
+
+    full_opt, full, full_base = results["with_gwp"]
+    min_opt, minimal, min_base = results["minimal"]
+    assert min_opt.parameters.gwp_col is None
+    assert "lifetime_gwp" not in min_opt._build_lifetime_arrays(grid)
+    for frame in (minimal["summary"], min_base["summary"], min_base["per_policy"]):
+        assert "lifetime_gwp" not in frame.columns
+    assert "lifetime_gwp" in full["summary"].columns and "lifetime_gwp" in full_base["per_policy"].columns
+
+    # Reporting-only: the optimum and the headline figures are identical.
+    assert np.array_equal(np.asarray(minimal["optimal_multipliers"]), np.asarray(full["optimal_multipliers"]))
+    for col in ("objective", "constraint", "npv", "lifetime_volume"):
+        assert minimal["summary"][col].iloc[0] == pytest.approx(full["summary"][col].iloc[0], rel=1e-12), col
+    # Baseline summaries line up column-for-column apart from the optional column.
+    assert list(min_base["summary"].columns) == [c for c in full_base["summary"].columns if c != "lifetime_gwp"]
+
+
+def test_gwp_col_must_be_a_name_or_none():
+    nb, rn = _books()
+    pipe = _build_individual_pipeline(_all_risk_numbers(nb, rn))
+    with pytest.raises(TypeError, match="gwp_col"):
+        _build_optimizer_with(nb, rn, pipe, gwp_col="")
+
+
+def _build_optimizer_with(nb, rn, pipe, **cols):
+    return PriceOptimizerIndividualMultiPeriod.from_pipeline(
+        pipeline=pipe, layer_name="demand_multiplier",
+        scored_data_nb=pipe.predict(nb), scored_data_rn=pipe.predict(rn),
+        data_nb=nb, data_rn=rn, n_periods=2, aging_rules_rn=_FEEDBACK_RULE,
+        **{**_MP_COLS, **cols},
+    )

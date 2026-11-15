@@ -210,3 +210,40 @@ def test_flatten_roundtrip_and_missing_key():
     assert np.allclose(opt._flatten(opt._unflatten(x)), x)
     with pytest.raises(KeyError, match="factor"):
         opt._flatten({})
+
+
+# --------------------------------------------------------------------------- #
+# Offered margin from profit / conversion (no premium or cost column needed)
+# --------------------------------------------------------------------------- #
+
+def test_mc_offered_margin_is_profit_over_conversion():
+    # The test pipeline defines expected_profit = (gwp - technical_cost) * conversion,
+    # so profit / conversion must recover exactly the old gwp - cost margin.
+    opt = _invariant_optimizer(n_periods=3, discount_rate=0.05)
+    x = opt._flatten(_overlay(opt))
+    df = opt._simulate_horizon(x)
+    _, off_over_disc, _ = opt._build_mc_inputs(x)
+    disc = 1.05 ** (np.arange(3) + 0.5)
+    per_period = [df[df["__period"] == t] for t in range(3)]
+    gwp_minus_cost = np.column_stack(
+        [(g["gwp"] - g["technical_cost"]).to_numpy(dtype=float) for g in per_period]
+    )
+    assert np.allclose(off_over_disc * disc[None, :], gwp_minus_cost, rtol=1e-12)
+
+
+def test_mc_zero_conversion_contributes_no_margin(monkeypatch):
+    # A row with conversion 0 never survives in MC; its margin is set to 0 rather
+    # than dividing by zero (no NaN/inf leaks into the NPV samples).
+    opt = _invariant_optimizer(n_periods=2)
+    real = opt._simulate_horizon
+
+    def zero_first_row(x):
+        df = real(x)
+        df.loc[0, "conversion_rate"] = 0.0
+        df.loc[0, "expected_profit"] = 0.0
+        return df
+
+    monkeypatch.setattr(opt, "_simulate_horizon", zero_first_row)
+    P, off_over_disc, _ = opt._build_mc_inputs(opt._flatten(_overlay(opt)))
+    assert np.isfinite(off_over_disc).all()
+    assert off_over_disc[0, 0] == 0.0 and P[0, 0] == 0.0

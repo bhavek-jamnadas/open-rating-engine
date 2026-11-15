@@ -274,11 +274,19 @@ class PriceOptimizerRatingFactorMultiPeriod(_MultiPeriodHorizonEngine):
         ``multipliers_dict -> float`` penalty subtracted from the objective each
         evaluation (e.g. L1/L2 on ``log(multiplier)``); mirrors the
         single-period ``regularizer`` hook.
-    sample_weight_col, conversion_col, profit_col, gwp_col, cost_col : str, keyword-only
-        Names of the scored columns the objective reads on the overlay's target
-        table: the survivorship weight, the conversion/retention probability,
-        the per-row **expected** profit (offered profit × conversion), and —
-        for reporting only — the offered premium and technical cost.
+    sample_weight_col, conversion_col, profit_col : str, keyword-only
+        Names of the only scored columns the optimizer reads, on the overlay's
+        target table: the survivorship weight (optional: a missing column is
+        taken as 1.0), the conversion/retention probability, and the per-row
+        **expected** profit (offered profit × conversion). Monte-Carlo recovers
+        the offered margin as ``profit / conversion``, so no premium or cost
+        column is needed.
+
+    The price-change feedback needs no column name: any aging rule whose
+    expression reads a column the pipeline writes (e.g. ``previous_gwp ←
+    df['gwp']``) is re-applied each period to the previous period's scored book.
+    Set ``aging_rule["feedback"]`` to ``True`` / ``False`` to override the
+    detection.
     """
 
     _SUPPORTED_METHODS = ("SLSQP", "L-BFGS-B", "Nelder-Mead")
@@ -300,9 +308,6 @@ class PriceOptimizerRatingFactorMultiPeriod(_MultiPeriodHorizonEngine):
         sample_weight_col="sample_weights",
         conversion_col="conversion_rate",
         profit_col="reporting_expected_profit",
-        gwp_col="gwp",
-        cost_col="reporting_offered_technical_premium",
-        previous_gwp_col="previous_gwp",
         id_columns=None,
     ):
         # The shared horizon engine validates and stores the baskets, aging
@@ -321,9 +326,6 @@ class PriceOptimizerRatingFactorMultiPeriod(_MultiPeriodHorizonEngine):
             sample_weight_col=sample_weight_col,
             conversion_col=conversion_col,
             profit_col=profit_col,
-            gwp_col=gwp_col,
-            cost_col=cost_col,
-            previous_gwp_col=previous_gwp_col,
             id_columns=id_columns,
         )
 
@@ -404,6 +406,9 @@ class PriceOptimizerRatingFactorMultiPeriod(_MultiPeriodHorizonEngine):
         obj.pipeline = pipeline
         obj._layer_schema = parsed["layer_schema"]
         obj._layer_meta = parsed["layer_meta"]
+        # Classify the aging rules (static vs feedback) now, so a malformed rule or
+        # a feedback rule in aging_rules_nb fails at construction, not mid-solve.
+        obj._aging_rule_split()
         return obj
 
     # --------------------------------------------------------------------- #
