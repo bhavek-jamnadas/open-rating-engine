@@ -13,6 +13,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from ..safe_eval import safe_eval
+
 __all__ = [
     "apply_aging",
     "AgingRuleError",
@@ -64,7 +66,9 @@ def apply_aging(
 
         df = input_frames[table]
         try:
-            result = eval(expression, {"df": df, "np": np, "pd": pd})
+            # Was a bare eval with NO __builtins__ key, i.e. every builtin
+            # (__import__, open). safe_eval always supplies the restricted set.
+            result = safe_eval(expression, {"df": df, "np": np, "pd": pd})
         except Exception as exc:
             raise AgingRuleError(
                 f"aging rule on '{table}.{column}' raised: {exc}"

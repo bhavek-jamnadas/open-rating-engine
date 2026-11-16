@@ -18,6 +18,7 @@ from typing import List, Dict, Callable, Optional, Union
 from mlflow.pyfunc import PythonModel, PythonModelContext
 
 from .binning import apply_thermometer_encoding
+from ..safe_eval import SAFE_BUILTINS, UnsafeExpressionError, check_expression, safe_eval
 
 __all__ = [
     "BasePricingLayer",
@@ -361,6 +362,15 @@ class ColumnCalculation(BasePricingLayer):
             raise TypeError(
                 "calculation must be a callable or a Python expression string"
             )
+        if isinstance(calculation, str):
+            # Refuse a formula outside the allowlist when the layer is BUILT, so a
+            # pipeline carrying one never loads. `safe_eval` re-checks at run time.
+            try:
+                check_expression(calculation)
+            except SyntaxError:
+                pass  # reported when the layer runs, as it always has been
+            except UnsafeExpressionError as exc:
+                raise UnsafeExpressionError(f"Layer '{name}': {exc}") from exc
 
         self.target_table = target_table
         self.output_column = output_column
@@ -382,16 +392,9 @@ class ColumnCalculation(BasePricingLayer):
 
     @staticmethod
     def _safe_builtins() -> dict:
-        return {
-            "int": int, "float": float, "str": str,
-            "bool": bool, "len": len, "abs": abs,
-            "round": round, "min": min, "max": max,
-            "sum": sum, "zip": zip, "map": map,
-            "enumerate": enumerate, "range": range,
-            "list": list, "dict": dict, "tuple": tuple,
-            "set": set, "isinstance": isinstance,
-            "True": True, "False": False, "None": None,
-        }
+        """The builtins a formula may call. Kept for callers that build a
+        namespace; `safe_eval` applies them itself."""
+        return dict(SAFE_BUILTINS)
 
     def _compute_result(
         self,
@@ -410,10 +413,9 @@ class ColumnCalculation(BasePricingLayer):
             if callable(self.calculation):
                 result = self.calculation(df, data, catalog, options)
             else:
-                result = eval(  # noqa: S307
+                result = safe_eval(
                     self.calculation,
                     {
-                        "__builtins__": self._safe_builtins(),
                         "np": np,
                         "pd": pd,
                         "df": df,
@@ -1390,11 +1392,14 @@ class RatingTablesLayer(ColumnCalculation):
                         f"Python identifier or shadows a reserved name (np, pd)"
                     )
             try:
-                self._formula_code = compile(formula, "<formula>", "eval")
+                check_expression(formula)
             except SyntaxError as exc:
                 raise ValueError(
                     f"Layer '{name}': formula has invalid Python syntax: {exc}"
                 ) from exc
+            except UnsafeExpressionError as exc:
+                raise UnsafeExpressionError(f"Layer '{name}': {exc}") from exc
+            self._formula_code = formula
         else:
             self._formula_code = None
         self.formula = formula
@@ -1462,12 +1467,9 @@ class RatingTablesLayer(ColumnCalculation):
                 lookup_frames[tbl_name] = pd.DataFrame({"value": value_series})
 
             if self._formula_code is not None:
-                eval_globals = {
-                    "__builtins__": ColumnCalculation._safe_builtins(),
-                    "np": np,
-                    "pd": pd,
-                }
-                combined = eval(self._formula_code, eval_globals, dict(lookup_frames))  # noqa: S307
+                # Rating tables first, then np/pd, matching the old globals/locals
+                # split: a table can never be named np or pd (refused above).
+                combined = safe_eval(self._formula_code, {**lookup_frames, "np": np, "pd": pd})
                 if not isinstance(combined, pd.Series):
                     combined = pd.Series(combined, index=df.index)
             else:
@@ -1880,9 +1882,7 @@ class H2OScoringParameter(ColumnCalculation):
             namespace["pd"] = pd
             namespace["df"] = out
             try:
-                result = eval(  # noqa: S307 - restricted builtins, governance-gated
-                    expr, {"__builtins__": ColumnCalculation._safe_builtins()}, namespace,
-                )
+                result = safe_eval(expr, namespace)
             except Exception as exc:  # noqa: BLE001
                 raise LayerCalculationError(
                     f"Layer '{self.name}': formula column '{dname}': {exc}"
@@ -2048,9 +2048,7 @@ def _evaluate_derived(layer_name: str, working: pd.DataFrame, derived: List[Dict
         namespace["pd"] = pd
         namespace["df"] = working
         try:
-            result = eval(  # noqa: S307 - restricted builtins, governance-gated
-                expr, {"__builtins__": ColumnCalculation._safe_builtins()}, namespace
-            )
+            result = safe_eval(expr, namespace)
         except Exception as exc:  # noqa: BLE001
             raise LayerCalculationError(
                 f"Layer '{layer_name}': formula column '{dname}': {exc}"

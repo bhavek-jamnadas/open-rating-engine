@@ -29,6 +29,7 @@ MODULES = [
     "open_rating_engine.rating_engine.binning",
     "open_rating_engine.rating_engine.layer_registry",
     "open_rating_engine.data_processing.data_aging",
+    "open_rating_engine.safe_eval",
     "open_rating_engine.optimization.individual_price_optimizer",
     "open_rating_engine.optimization.rating_factor_price_optimizer",
     "open_rating_engine.optimization.multi_period_individual_price_optimizer",

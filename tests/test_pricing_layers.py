@@ -93,9 +93,11 @@ def test_column_calculation_invalid_expression_raises(sample_data):
 
 
 def test_column_calculation_safe_builtins_block_dangerous_calls(sample_data):
-    layer = ColumnCalculation("c", "policy", "x", "__import__('os').getcwd()")
-    with pytest.raises(LayerCalculationError):
-        layer.apply(sample_data, {}, {})
+    # Refused when the layer is built, before anything can run (see safe_eval.py).
+    from open_rating_engine.safe_eval import UnsafeExpressionError
+
+    with pytest.raises(UnsafeExpressionError, match="__import__"):
+        ColumnCalculation("c", "policy", "x", "__import__('os').getcwd()")
 
 
 def test_column_calculation_length_mismatch_raises(sample_data):
