@@ -19,6 +19,7 @@ from typing import Dict, Iterable, List, Optional
 import numpy as np
 import pandas as pd
 
+from ..safe_eval import UnsafeExpressionError, safe_eval
 from ..rating_engine.pricing_layers import (
     ColumnCalculation,
     LayerCalculationError,
@@ -213,9 +214,12 @@ class _Compiler:
         return False
 
     def _evaluate(self, node: ast.AST):
-        code = compile(ast.Expression(body=node), "<plan-constant>", "eval")
+        # Constant folding runs a user's sub-expression at EXPORT time, inside the
+        # deploying process, so it is held to the same allowlist as predict.
         try:
-            return eval(code, self.scope.constant_namespace())  # noqa: S307 - same namespace as predict
+            return safe_eval(node, self.scope.constant_namespace())
+        except UnsafeExpressionError as exc:
+            raise UnsupportedExpression(str(exc)) from exc
         except Exception as exc:
             raise UnsupportedExpression(
                 f"could not evaluate {ast.unparse(node)!r} at export time: {exc}"
